@@ -1,7 +1,12 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import {
+  View, Text, Pressable, ActivityIndicator, KeyboardAvoidingView,
+  ScrollView, Platform,
+} from 'react-native';
 import { Link } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+import AuthField from '../../components/AuthField';
+import { authStyles as s } from '../../components/auth-styles';
 
 export default function Login() {
   const { login } = useAuth();
@@ -18,7 +23,6 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email.trim().toLowerCase(), password);
-      // Redirect khud hoga (Stack.Protected), manually kuch nahi karna
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Login fail ho gaya');
     } finally {
@@ -27,44 +31,52 @@ export default function Login() {
   };
 
   return (
-    <View style={s.container}>
-      <Text style={s.title}>Login</Text>
+    <KeyboardAvoidingView
+      style={s.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+        <View style={s.header}>
+          <View style={s.logo}><Text style={s.logoText}>🧭</Text></View>
+          <Text style={s.brand}>TripMate</Text>
+          <Text style={s.subtitle}>Wapas aane par khushi hui! Login karo</Text>
+        </View>
 
-      <TextInput
-        style={s.input}
-        placeholder="Email"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        style={s.input}
-        placeholder="Password"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
+        <View style={s.card}>
+          <AuthField
+            label="Email"
+            placeholder="you@example.com"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <AuthField
+            label="Password"
+            placeholder="Apna password likho"
+            isPassword
+            value={password}
+            onChangeText={setPassword}
+          />
 
-      {!!error && <Text style={s.error}>{error}</Text>}
+          {!!error && (
+            <View style={s.errorBox}><Text style={s.errorText}>{error}</Text></View>
+          )}
 
-      <Pressable style={s.button} onPress={onSubmit} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Login</Text>}
-      </Pressable>
+          <Pressable
+            style={[s.button, loading && s.buttonDisabled]}
+            onPress={onSubmit}
+            disabled={loading}
+          >
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.buttonText}>Login</Text>}
+          </Pressable>
+        </View>
 
-      <Link href="/register" style={s.link}>
-        Account nahi hai? Sign up
-      </Link>
-    </View>
+        <View style={s.footer}>
+          <Text style={s.footerText}>Account nahi hai?</Text>
+          <Link href="/register" style={s.footerLink}>Sign up</Link>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
-
-const s = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, gap: 12 },
-  title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12 },
-  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 8, alignItems: 'center' },
-  btnText: { color: '#fff', fontWeight: '600' },
-  error: { color: 'red' },
-  link: { textAlign: 'center', marginTop: 8, color: '#2563eb' },
-});
