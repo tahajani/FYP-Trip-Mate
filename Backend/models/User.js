@@ -1,5 +1,6 @@
 // models/User.js
 const mongoose = require('mongoose');
+const { CATEGORIES } = require('../config/categories');
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -8,16 +9,9 @@ const userSchema = new mongoose.Schema({
   googleId: { type: String },
   facebookId: { type: String },
   // Shared vocabulary interest categories
-  interests: {
-    type: [String],
-    default: []
-  },
+  interests: { type: [{ type: String, enum: CATEGORIES }], default: [] },
   // Pace setting: 'relaxed', 'moderate', or 'fast'
-  pace: {
-    type: String,
-    enum: ['relaxed', 'moderate', 'fast'],
-    default: 'moderate'
-  }
+  pace: { type: String, enum: ['relaxed', 'moderate', 'fast'], default: 'moderate' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);
