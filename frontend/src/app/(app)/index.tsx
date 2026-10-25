@@ -1,8 +1,12 @@
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Redirect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+
 
 export default function Home() {
   const { user, logout } = useAuth();
+  
+  if (user && user.interests.length === 0) return <Redirect href="/onboarding" />;
 
   return (
     <View style={s.container}>
