@@ -7,5 +7,5 @@ export default function AppLayout() {
   // Login nahi hai to login screen par bhejo
   if (!user) return <Redirect href="/login" />;
 
-  return <Stack />;
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
