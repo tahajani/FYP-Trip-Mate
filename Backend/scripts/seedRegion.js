@@ -52,6 +52,7 @@ function buildQuery({ south, west, north, east }) {
   nwr["shop"~"mall|marketplace"]${b};
   nwr["amenity"="marketplace"]${b};
   nwr["natural"="beach"]${b};
+  nwr["name"~"Faisal Mosque|Lok Virsa|Saidpur|Shakarparian",i]${b};
 );
 out center tags;`;
 }

@@ -15,6 +15,13 @@ app.use(cors());
 app.use('/api/users', userRoutes);
 app.use('/api/auth',authRoutes)
 
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    uptime: Math.round(process.uptime()),
+  });
+});
 
 const PORT = process.env.PORT 
 mongoose.connect(process.env.MONGO_URI)
