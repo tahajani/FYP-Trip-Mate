@@ -33,3 +33,11 @@ test('poolSize', () => {
   expect(poolSize(2, 'relaxed', 60)).toBe(6);   // k = floor(270/90) = 3
   expect(poolSize(1, 'fast', 90)).toBe(4);      // k = floor(480/120) = 4
 });
+
+test('Lake Trail example from Formulas Master (labels remapped)', () => {
+  // user: first two categories = 1, moderate pace 0.5; place vector (0.8, 0.6), intensity 0.6
+  const user = { interests: ['history_heritage', 'religious'], pace: 'moderate' };
+  const poi = { interestVector: [0.8, 0.6, 0, 0, 0, 0, 0, 0, 0, 0], intensity: 0.6 };
+  expect(cosine(userVectorFromInterests(user.interests), poi.interestVector)).toBeCloseTo(0.99, 2);
+  expect(soloScore(user, poi)).toBeCloseTo(0.9675, 3);
+});
