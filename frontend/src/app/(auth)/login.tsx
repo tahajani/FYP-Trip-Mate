@@ -6,10 +6,11 @@ import {
 import { Link } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import AuthField from '../../components/AuthField';
+import GoogleSignInButton from '../../components/GoogleSignInButton';
 import { authStyles as s } from '../../components/auth-styles';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -70,6 +71,8 @@ export default function Login() {
           >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.buttonText}>Login</Text>}
           </Pressable>
+
+          <GoogleSignInButton onIdToken={loginWithGoogle} onError={setError} />
         </View>
 
         <View style={s.footer}>
