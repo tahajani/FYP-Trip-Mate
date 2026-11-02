@@ -58,6 +58,7 @@ router.post('/login', async (req, res) => {
 
     // Agar User model me password par select:false hai to .select('+password') zaroori hai
     const user = await User.findOne({ email: email.trim().toLowerCase() }).select('+password');
+    if (!user || !user.password) return res.status(401).json({ message: 'Invalid credentials' });
     const ok = user && (await bcrypt.compare(password, user.password));
     if (!ok) {
       // Jaan bujh kar same message: attacker ko pata na chale email sahi tha ya password

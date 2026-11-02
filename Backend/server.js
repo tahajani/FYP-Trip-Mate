@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const userRoutes = require('./routes/userRoutes');
+const socialAuthRoutes = require('./routes/socialAuthRoutes');
 const authRoutes = require('./routes/authRoutes');
 const cors = require('cors');
 dotenv.config();
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use(cors());
 
 app.use('/api/users', userRoutes);
+app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth',authRoutes)
 
 app.get('/api/health', (req, res) => {
