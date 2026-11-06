@@ -5,8 +5,9 @@ const mongoose = require('mongoose');
 const Region = require('../models/Region');
 const Poi = require('../models/Poi');
 const { classify } = require('../utils/tagRules');
+const { curate } = require('../utils/curation');
 
-// Nominatim policy: app ko identify karo. Apni asli email yahan likho.
+// Nominatim policy: identify the app.
 const USER_AGENT = 'TripMate-FYP/1.0 taha2004qwertygreen@gmail.com';
 const OVERPASS_URL = process.env.OVERPASS_URL || 'https://overpass-api.de/api/interpreter';
 
@@ -18,32 +19,68 @@ const REGIONS = {
 };
 
 // Usage:
-//   node scripts/seedRegion.js islamabad
-//   node scripts/seedRegion.js karachi --bbox 24.80,66.95,25.00,67.20   (S,W,N,E, chhota box)
-//   node scripts/seedRegion.js lahore --refresh                          (raw cache ignore)
+//   node scripts/seedRegion.js islamabad --reset     (delete this region's POIs first, then reseed)
+//   node scripts/seedRegion.js islamabad --refresh   (ignore the raw cache)
+//   node scripts/seedRegion.js karachi --bbox 24.80,66.95,25.00,67.20   (S,W,N,E, overrides everything)
+// Bbox priority: --bbox, then "bbox" in data/overrides/<slug>.json, then Nominatim.
 const slug = process.argv[2];
 const refresh = process.argv.includes('--refresh');
+const reset = process.argv.includes('--reset');
 const bboxArg = process.argv.find((a) => a.startsWith('--bbox'));
-const bboxValue = bboxArg ? (bboxArg.includes('=') ? bboxArg.split('=')[1] : process.argv[process.argv.indexOf(bboxArg) + 1]) : null;
+const bboxValue = bboxArg
+  ? (bboxArg.includes('=') ? bboxArg.split('=')[1] : process.argv[process.argv.indexOf(bboxArg) + 1])
+  : null;
 
-async function getBbox(query) {
+function validateBbox({ south, west, north, east }) {
+  if (![south, west, north, east].every(Number.isFinite) || south >= north || west >= east) {
+    throw new Error('bbox is invalid: need numbers with south < north and west < east');
+  }
+}
+
+function loadOverrides(regionSlug) {
+  const file = path.join(__dirname, '../data/overrides', `${regionSlug}.json`);
+  if (!fs.existsSync(file)) {
+    console.log('No overrides file:', file);
+    return {};
+  }
+  let o;
+  try {
+    o = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    throw new Error(`Overrides file is not valid JSON: ${e.message}`);
+  }
+  for (const n of o.landmarkNames ?? []) {
+    if (!/^[\p{L}\p{N} '\-]+$/u.test(n)) throw new Error(`landmarkNames: unsupported characters in "${n}"`);
+  }
+  if (o.bbox) validateBbox(o.bbox);
+  return o;
+}
+
+async function getBbox(query, overrides) {
   if (bboxValue) {
     const [south, west, north, east] = bboxValue.split(',').map(Number);
+    const b = { south, west, north, east };
+    validateBbox(b);
+    return b;
+  }
+  if (overrides.bbox) {
+    const { south, west, north, east } = overrides.bbox;
     return { south, west, north, east };
   }
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
   const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
   if (!res.ok) throw new Error(`Nominatim failed: ${res.status}`);
   const data = await res.json();
-  if (!data.length) throw new Error('Nominatim: region nahi mila');
+  if (!data.length) throw new Error('Nominatim: region not found');
   const [south, north, west, east] = data[0].boundingbox.map(Number); // Nominatim order: S,N,W,E
   return { south, west, north, east };
 }
 
-function buildQuery({ south, west, north, east }) {
+function buildQuery({ south, west, north, east }, overrides) {
   const b = `(${south},${west},${north},${east})`;
-  // Plan ki query + kuch lines meri taraf se (market, beach) taake un categories ke places bhi aa saken.
-  return `[out:json][timeout:90];
+  const names = overrides.landmarkNames ?? [];
+  const landmarkLine = names.length ? `  nwr["name"~"${names.join('|')}",i]${b};\n` : '';
+  return `[out:json][timeout:120];
 (
   nwr["tourism"~"attraction|museum|viewpoint|zoo|theme_park|gallery"]${b};
   nwr["historic"]${b};
@@ -52,8 +89,13 @@ function buildQuery({ south, west, north, east }) {
   nwr["shop"~"mall|marketplace"]${b};
   nwr["amenity"="marketplace"]${b};
   nwr["natural"="beach"]${b};
-  nwr["name"~"Faisal Mosque|Lok Virsa|Saidpur|Shakarparian",i]${b};
-);
+  nwr["amenity"~"restaurant|cafe|food_court"]["tourism"]${b};
+  nwr["amenity"~"restaurant|cafe|food_court"]["wikidata"]${b};
+  nwr["natural"~"peak|wood"]["name"]${b};
+  nwr["leisure"="marina"]["name"]${b};
+  nwr["natural"="water"]["water"~"lake|reservoir"]["name"]${b};
+  nwr["route"="hiking"]["name"]${b};
+${landmarkLine});
 out center tags;`;
 }
 
@@ -62,7 +104,7 @@ async function fetchOverpass(query) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': USER_AGENT },
     body: 'data=' + encodeURIComponent(query),
-    signal: AbortSignal.timeout(120000),
+    signal: AbortSignal.timeout(150000),
   });
   if (!res.ok) throw new Error(`Overpass failed: ${res.status}`);
   return res.json();
@@ -70,28 +112,38 @@ async function fetchOverpass(query) {
 
 async function main() {
   if (!slug || !REGIONS[slug]) {
-    console.log('Usage: node scripts/seedRegion.js <islamabad|lahore|karachi|multan> [--refresh] [--bbox S,W,N,E]');
+    console.log('Usage: node scripts/seedRegion.js <islamabad|lahore|karachi|multan> [--reset] [--refresh] [--bbox S,W,N,E]');
     process.exit(1);
   }
 
+  const overrides = loadOverrides(slug);
   await mongoose.connect(process.env.MONGO_URI);
 
-  const bbox = await getBbox(REGIONS[slug]);
+  const bbox = await getBbox(REGIONS[slug], overrides);
   console.log('Bounding box:', bbox);
 
-  // Raw result disk par save, dobara run par cache use hota hai
+  const query = buildQuery(bbox, overrides);
   const rawDir = path.join(__dirname, '../data/raw');
   fs.mkdirSync(rawDir, { recursive: true });
   const rawFile = path.join(rawDir, `${slug}.json`);
+  const queryFile = path.join(rawDir, `${slug}.query.txt`);
+
+  // The cache is used only when the saved query is exactly the current query.
+  const cacheValid =
+    !refresh &&
+    fs.existsSync(rawFile) &&
+    fs.existsSync(queryFile) &&
+    fs.readFileSync(queryFile, 'utf8') === query;
 
   let raw;
-  if (!refresh && fs.existsSync(rawFile)) {
-    console.log('Cached raw file use ho rahi hai:', rawFile);
+  if (cacheValid) {
+    console.log('Using cached raw file:', rawFile);
     raw = JSON.parse(fs.readFileSync(rawFile, 'utf8'));
   } else {
-    console.log('Overpass se fetch ho raha hai (thora time lag sakta hai)...');
-    raw = await fetchOverpass(buildQuery(bbox));
+    console.log('Fetching from Overpass (can take a while)...');
+    raw = await fetchOverpass(query);
     fs.writeFileSync(rawFile, JSON.stringify(raw));
+    fs.writeFileSync(queryFile, query);
   }
 
   const region = await Region.findOneAndUpdate(
@@ -99,6 +151,11 @@ async function main() {
     { name: REGIONS[slug], slug, bbox },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
+
+  if (reset) {
+    const del = await Poi.deleteMany({ regionId: region._id });
+    console.log('Deleted old POIs of this region:', del.deletedCount);
+  }
 
   const ops = [];
   const reasons = {};
@@ -111,7 +168,14 @@ async function main() {
     if (lat == null || lon == null) continue;
 
     const tags = el.tags || {};
-    const result = classify(tags, tags.name);
+    const result = curate({
+      result: classify(tags, tags.name),
+      tags,
+      name: tags.name,
+      osmType: el.type,
+      osmId: el.id,
+      overrides,
+    });
 
     if (result.needsReview) {
       reasons[result.reviewReason] = (reasons[result.reviewReason] || 0) + 1;

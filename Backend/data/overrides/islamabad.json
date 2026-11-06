@@ -1,0 +1,8 @@
+{
+  "bbox": { "south": 33.6678, "west": 72.9660, "north": 33.7543, "east": 73.1377 },
+  "landmarkNames": ["Faisal Mosque", "Lok Virsa", "Saidpur Village", "Shakarparian", "Pakistan Monument", "Rawal Lake", "Daman-e-Koh"],
+  "excludeCities": ["Rawalpindi"],
+  "excludeNames": [],
+  "excludeIds": [],
+  "includeNames": []
+}
