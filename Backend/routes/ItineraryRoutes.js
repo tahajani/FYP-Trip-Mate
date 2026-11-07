@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Itinerary = require('../models/Itinerary');
 const { loadRegionPois } = require('../services/candidates');
 const { generateSoloItinerary } = require('../services/soloItinerary');
+const { recomputeDays } = require('../services/itineraryEdit');
 
 const router = express.Router();
 
@@ -70,6 +71,33 @@ router.get('/:id', auth, async (req, res) => {
     res.json(it);
   } catch (err) {
     res.status(400).json({ message: 'Invalid id' });
+  }
+});
+
+// PUT /api/itineraries/:id/days   body: { days: [{ day, places: [...] }] }
+// Day adjustment: add / remove / reorder / move between days. Travel times are recomputed (OSRM, else estimate).
+router.put('/:id/days', auth, async (req, res) => {
+  try {
+    const it = await Itinerary.findById(req.params.id);
+    if (!it) return res.status(404).json({ message: 'Not found' });
+    if (String(it.ownerId) !== userIdOf(req)) {
+      return res.status(403).json({ message: 'Ye itinerary tumhari nahi hai' });
+    }
+
+    const existing = it.days.map((d) => (d.toObject ? d.toObject() : d));
+    let result;
+    try {
+      result = await recomputeDays(existing, (req.body || {}).days);
+    } catch (e) {
+      return res.status(400).json({ message: e.message });
+    }
+
+    it.days = result.days;
+    if (result.source) it.travelTimeSource = result.source;
+    await it.save(); // schema validation errors land in the catch below
+    res.json({ itinerary: it, warnings: result.warnings });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

@@ -17,6 +17,7 @@ app.use(cors());
 app.use('/api/users', userRoutes);
 app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth',authRoutes)
+app.use('/api/places', require('./routes/placeRoutes'));
 app.use('/api/itineraries', itineraryRoutes)
 
 app.get('/api/health', (req, res) => {
