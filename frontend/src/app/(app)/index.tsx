@@ -90,9 +90,7 @@ export default function Home() {
           <Text style={s.sectionTitle}>Your Trips</Text>
           <Text style={s.sectionSub}>Plan and manage your itineraries</Text>
         </View>
-        <Pressable style={s.planBtn} onPress={onPlanTrip}>
-          <Text style={s.planBtnText}>＋ Plan New Trip</Text>
-        </Pressable>
+        <Pressable onPress={() => router.push('/plan-trip')}><Text>Plan a trip</Text></Pressable>
       </View>
 
       <View style={s.empty}>
