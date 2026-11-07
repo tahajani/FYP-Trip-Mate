@@ -17,6 +17,10 @@ export default function GoogleSignInButton({ onIdToken, onError }: Props) {
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
   });
 
+  // DEBUG: ye redirectUri Google Console ke "Authorized redirect URIs" mein bilkul same hona chahiye
+  console.log('redirectUri:', request?.redirectUri);
+  console.log('google response:', response);
+
   useEffect(() => {
     if (!response) return;
     if (response.type === 'success') {
