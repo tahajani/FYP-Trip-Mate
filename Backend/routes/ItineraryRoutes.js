@@ -2,10 +2,11 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const User = require('../models/User');
 const Itinerary = require('../models/Itinerary');
-const { loadRegionPois } = require('../services/candidates');
 const { generateSoloItinerary, MAX_DAYS } = require('../services/soloItinerary');
 const { recomputeDays } = require('../services/itineraryEdit');
 const { validateTripDates } = require('../utils/dates');
+const { pickDayPlaces } = require('../services/regenerateDay');
+const { loadRegionPois, matchedCategories } = require('../services/candidates');
 
 const router = express.Router();
 
@@ -76,6 +77,19 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const it = await Itinerary.findById(req.params.id);
+    if (!it) return res.status(404).json({ message: 'Not found' });
+    if (String(it.ownerId) !== userIdOf(req)) {
+      return res.status(403).json({ message: 'Ye itinerary tumhari nahi hai' });
+    }
+    await it.deleteOne();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.name === 'CastError' ? 400 : 500).json({ message: err.name === 'CastError' ? 'Invalid id' : err.message });
+  }
+});
 // GET /api/itineraries/:id
 router.get('/:id', auth, async (req, res) => {
   try {
@@ -117,6 +131,57 @@ router.put('/:id/days', auth, async (req, res) => {
     }
     await it.save(); // schema validation errors land in the catch below
     res.json({ itinerary: it, warnings: result.warnings });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:id/days/:day/regenerate', auth, async (req, res) => {
+  try {
+    const it = await Itinerary.findById(req.params.id);
+    if (!it) return res.status(404).json({ message: 'Not found' });
+    if (String(it.ownerId) !== userIdOf(req)) return res.status(403).json({ message: 'Ye itinerary tumhari nahi hai' });
+
+    const dayNo = Number(req.params.day);
+    const existing = it.days.map((d) => (d.toObject ? d.toObject() : d));
+    if (!existing.some((d) => d.day === dayNo)) return res.status(404).json({ message: 'Is din ka data nahi mila' });
+
+    const regionSlug = it.regionSlug || (req.body || {}).regionSlug; // NOT VERIFIED: does your Itinerary store regionSlug?
+    if (!regionSlug) return res.status(400).json({ message: 'regionSlug is required' });
+    const user = await User.findById(userIdOf(req)).select('interests pace');
+    if (!user || !user.interests || user.interests.length === 0) {
+      return res.status(400).json({ message: 'Pehle onboarding mein interests chuno.' });
+    }
+
+    const pois = await loadRegionPois(regionSlug);
+    const usedIds = existing.flatMap((d) => d.places).map((p) => p.poiId).filter(Boolean);
+    const picked = await pickDayPlaces({ interests: user.interests, pace: user.pace }, pois, usedIds);
+    if (picked.places.length === 0) return res.status(409).json({ message: 'Is din ke liye koi nayi jagah nahi mili' });
+
+    const autoSource = (existing.flatMap((d) => d.places).find((p) => p.source && p.source !== 'manual') || {}).source;
+    const asPayload = (p) => ({
+      poiId: p.poiId, name: p.name, kind: p.kind, location: p.location,
+      visitMinutes: p.visitMinutes, score: p.score, matched: p.matched, source: p.source,
+    });
+    const payload = existing.map((d) =>
+      d.day !== dayNo
+        ? { day: d.day, places: d.places.map(asPayload) }
+        : {
+            day: d.day,
+            places: picked.places.map(({ poi, score }) => ({
+              poiId: poi._id, name: poi.name, kind: poi.kind,
+              location: { lat: poi.location.coordinates[1], lon: poi.location.coordinates[0] },
+              visitMinutes: poi.avgVisitDuration, score, matched: matchedCategories(user, poi),
+              ...(autoSource ? { source: autoSource } : {}),
+            })),
+          }
+    );
+
+    const result = await recomputeDays(existing, payload);
+    it.days = result.days;
+    if (result.source) it.travelTimeSource = result.source;
+    await it.save();
+    res.json({ itinerary: it, warnings: [...(result.warnings || []), ...picked.warnings], regeneratedDay: dayNo });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
