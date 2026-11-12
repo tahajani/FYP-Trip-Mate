@@ -1,3 +1,4 @@
+//osrm.js
 const { haversineKm } = require('../utils/geo');
 
 // Public OSRM demo server: fine for development only. Self-hosted OSRM (Docker) is planned for the demo.
