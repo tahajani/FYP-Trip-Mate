@@ -6,6 +6,8 @@ import LeafletMap from '../../../components/LeafletMap';
 import PlaceSearch from '../../../components/PlaceSearch';
 import { MapMarker } from '../../../components/leafletHtml';
 import { SearchResult, Trip, TripDay, TripPlace } from '../../../types/trip';
+import { formatDay, formatShort } from '../../../utils/dates';
+import { categoryLabel } from '../../../utils/labels';
 
 const DAY_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea', '#dc2626', '#0891b2', '#ca8a04'];
 const colorOf = (day: number) => DAY_COLORS[(day - 1) % DAY_COLORS.length];
@@ -22,7 +24,7 @@ export default function ItineraryScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [editWarnings, setEditWarnings] = useState<string[]>([]);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
 
@@ -72,11 +74,13 @@ export default function ItineraryScreen() {
       location: r.location,
       visitMinutes: r.visitMinutes ?? 60,
       travelMinutesFromPrevious: 0,
+      matched: [],
       source: 'manual',
     };
     edit((ds) => void dayOf(ds, dayNo).places.push(p));
   };
 
+  // Saving also asks the backend for the road times again (OSRM), so it doubles as "recalculate travel".
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -90,13 +94,14 @@ export default function ItineraryScreen() {
           location: p.location,
           visitMinutes: p.visitMinutes,
           score: p.score,
+          matched: p.matched,
           source: p.source,
         })),
       }));
       const { data } = await api.put(`/itineraries/${id}/days`, { days: payload });
       setTrip(data.itinerary);
       setDays(data.itinerary.days);
-      setWarnings(data.warnings ?? []);
+      setEditWarnings(data.warnings ?? []);
       setDirty(false);
       setOpenKey(null);
     } catch (e: any) {
@@ -130,6 +135,8 @@ export default function ItineraryScreen() {
 
   const editable = sel !== 'all';
   const visibleDays = sel === 'all' ? days : days.filter((d) => d.day === sel);
+  // "estimated" is shown in the travel banner below, the other saved warnings (coverage, dropped, moved) as a list
+  const savedWarnings = (trip.warnings ?? []).filter((w) => !/estimated from straight-line/i.test(w));
 
   return (
     <ScrollView contentContainerStyle={s.container}>
@@ -137,9 +144,27 @@ export default function ItineraryScreen() {
         <Text style={s.link}>← Wapas</Text>
       </Pressable>
       <Text style={s.title}>Tumhari itinerary</Text>
+      {trip.startDate && trip.endDate && (
+        <Text style={s.dates}>
+          {formatDay(trip.startDate)} se {formatDay(trip.endDate)} tak · {days.length} din
+        </Text>
+      )}
 
       <LeafletMap markers={markers} height={280} />
       <Text style={s.hint}>Lakeer seedhi line hai (sadak ka raasta nahi). Marker dabao to naam dikhega.</Text>
+
+      {trip.travelTimeSource === 'haversine' ? (
+        <View style={s.banner}>
+          <Text style={s.bannerText}>
+            Safar ka waqt sirf andaza hai (seedhi doori se), kyunke sadak ka data (OSRM) nahi mila.
+          </Text>
+          <Pressable style={s.bannerBtn} onPress={save} disabled={saving}>
+            <Text style={s.bannerBtnText}>{saving ? 'Ruko...' : 'Sadak ka waqt dobara nikalo'}</Text>
+          </Pressable>
+        </View>
+      ) : trip.travelTimeSource === 'osrm' ? (
+        <Text style={s.ok}>✓ Safar ka waqt asli sadak ke hisaab se (OSRM)</Text>
+      ) : null}
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
         {days.map((d) => (
@@ -153,6 +178,7 @@ export default function ItineraryScreen() {
             }}
           >
             <Text style={[s.tabText, sel === d.day && { color: '#fff' }]}>Din {d.day}</Text>
+            {d.date && <Text style={[s.tabDate, sel === d.day && { color: '#fff' }]}>{formatShort(d.date)}</Text>}
           </Pressable>
         ))}
         <Pressable style={[s.tab, sel === 'all' && s.tabAll]} onPress={() => setSel('all')}>
@@ -168,7 +194,10 @@ export default function ItineraryScreen() {
         return (
           <View key={day.day} style={{ marginTop: 16 }}>
             <View style={s.dayHead}>
-              <Text style={s.dayTitle}>Din {day.day}</Text>
+              <Text style={s.dayTitle}>
+                Din {day.day}
+                {day.date ? ` · ${formatDay(day.date)}` : ''}
+              </Text>
               <Text style={[s.dayTotal, over && { color: '#b91c1c' }]}>
                 {total} / {day.capacityMinutes} min
               </Text>
@@ -193,6 +222,7 @@ export default function ItineraryScreen() {
             {day.places.map((p, i) => {
               const key = `${day.day}-${i}-${p.name}`;
               const open = editable && openKey === key;
+              const matched = p.matched ?? [];
               return (
                 <View key={key} style={s.card}>
                   <Pressable style={s.cardRow} onPress={() => editable && setOpenKey(open ? null : key)}>
@@ -205,6 +235,17 @@ export default function ItineraryScreen() {
                         {p.kind.replace(/_/g, ' ')} · {p.visitMinutes} min
                         {i > 0 ? ` · ${p.travelMinutesFromPrevious ?? 0} min safar` : ''}
                       </Text>
+                      <View style={s.pills}>
+                        {matched.map((c) => (
+                          <Text key={c} style={[s.pill, s.pillMatch]}>
+                            {categoryLabel(c)}
+                          </Text>
+                        ))}
+                        {p.source === 'manual' && <Text style={[s.pill, s.pillManual]}>Tumne add ki</Text>}
+                        {p.source !== 'manual' && matched.length === 0 && (
+                          <Text style={[s.pill, s.pillWarn]}>Pasand se match nahi</Text>
+                        )}
+                      </View>
                     </View>
                     {editable && <Text style={s.more}>{open ? '▲' : '▼'}</Text>}
                   </Pressable>
@@ -270,8 +311,18 @@ export default function ItineraryScreen() {
         <Text style={[s.hint, { marginTop: 16 }]}>Badalne ke liye ek din chuno.</Text>
       )}
 
-      {warnings.map((w, i) => (
-        <Text key={i} style={s.warn}>
+      {savedWarnings.length > 0 && (
+        <View style={s.notes}>
+        <Text style={s.notesTitle}>Dhyan dene wali baatein</Text>
+          {savedWarnings.map((w, i) => (
+            <Text key={i} style={s.warn}>
+              • {w}
+            </Text>
+          ))}
+        </View>
+      )}
+      {editWarnings.map((w, i) => (
+        <Text key={`e${i}`} style={s.warn}>
           {w}
         </Text>
       ))}
@@ -289,12 +340,19 @@ export default function ItineraryScreen() {
 const s = StyleSheet.create({
   container: { padding: 20, paddingTop: 48, paddingBottom: 60, backgroundColor: '#f8fafc', flexGrow: 1 },
   link: { color: '#2563eb', fontWeight: '600' },
-  title: { fontSize: 26, fontWeight: '800', color: '#0f172a', marginVertical: 12 },
+  title: { fontSize: 26, fontWeight: '800', color: '#0f172a', marginTop: 12 },
+  dates: { color: '#475569', fontWeight: '600', marginTop: 4, marginBottom: 12 },
   hint: { color: '#64748b', fontSize: 12, marginTop: 6 },
   muted: { color: '#64748b', marginTop: 8 },
-  tab: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, marginRight: 8, backgroundColor: '#fff' },
-  tabAll: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  ok: { color: '#15803d', fontSize: 12, marginTop: 8, fontWeight: '600' },
+  banner: { backgroundColor: '#fffbeb', borderColor: '#fcd34d', borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 10 },
+  bannerText: { color: '#92400e', fontSize: 13 },
+  bannerBtn: { alignSelf: 'flex-start', marginTop: 8, backgroundColor: '#f59e0b', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  bannerBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  tab: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 8, marginRight: 8, backgroundColor: '#fff', alignItems: 'center' },
+  tabAll: { backgroundColor: '#0f172a', borderColor: '#0f172a', justifyContent: 'center' },
   tabText: { fontWeight: '700', color: '#0f172a' },
+  tabDate: { fontSize: 11, color: '#64748b', marginTop: 1 },
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   dayTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
   dayTotal: { fontWeight: '700', color: '#475569' },
@@ -305,13 +363,20 @@ const s = StyleSheet.create({
   badgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
   placeName: { fontWeight: '700', color: '#0f172a' },
   meta: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  pill: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, overflow: 'hidden' },
+  pillMatch: { backgroundColor: '#dbeafe', color: '#1d4ed8' },
+  pillManual: { backgroundColor: '#ede9fe', color: '#6d28d9' },
+  pillWarn: { backgroundColor: '#fef3c7', color: '#92400e' },
   more: { color: '#94a3b8' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12, paddingTop: 0 },
   act: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   actText: { fontWeight: '600', color: '#0f172a', fontSize: 13 },
   addBtn: { borderWidth: 1, borderColor: '#2563eb', borderStyle: 'dashed', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   addText: { color: '#2563eb', fontWeight: '700' },
-  warn: { color: '#92400e', marginTop: 8, fontSize: 13 },
+  notes: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginTop: 16 },
+  notesTitle: { fontWeight: '800', color: '#0f172a', marginBottom: 4 },
+  warn: { color: '#92400e', marginTop: 6, fontSize: 13 },
   error: { color: '#b91c1c', marginTop: 12 },
   save: { backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 20 },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 16 },

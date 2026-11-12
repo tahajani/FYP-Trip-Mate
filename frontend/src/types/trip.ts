@@ -7,11 +7,13 @@ export type TripPlace = {
   visitMinutes: number;
   travelMinutesFromPrevious?: number;
   score?: number;
+  matched?: string[]; // which of the user's chosen interests this place fits
   source?: string;
 };
 
 export type TripDay = {
   day: number;
+  date?: string; // 'YYYY-MM-DD'
   places: TripPlace[];
   capacityMinutes: number;
   visitMinutes: number;
@@ -20,7 +22,12 @@ export type TripDay = {
 
 export type Trip = {
   _id: string;
+  startDate?: string;
+  endDate?: string;
+  dayCount?: number;
   days: TripDay[];
+  travelTimeSource?: 'osrm' | 'haversine';
+  warnings?: string[];
 };
 
 export type SearchResult = {

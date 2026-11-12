@@ -1,19 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import DateField from '../../components/DateField';
+import { addDaysISO, daysInclusive, formatDay, todayLocalISO } from '../../utils/dates';
+import { categoryLabel } from '../../utils/labels';
 
 type Region = { _id: string; slug: string; name?: string };
 
-const MAX_DAYS = 7;
+const MAX_DAYS = 14; // same limit as the backend
 
 export default function PlanTrip() {
   const router = useRouter();
   const { user } = useAuth();
+  const today = useMemo(() => todayLocalISO(), []);
+
   const [regions, setRegions] = useState<Region[]>([]);
   const [region, setRegion] = useState<string | null>(null);
-  const [days, setDays] = useState(2);
+  const [start, setStart] = useState(today);
+  const [end, setEnd] = useState(addDaysISO(today, 1));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,13 +38,25 @@ export default function PlanTrip() {
     })();
   }, []);
 
+  // The number of days comes from the two dates (both days included), there is no +/- counter.
+  const days = daysInclusive(start, end);
+  const problem =
+    days < 1 ? 'Khatam ki tareekh shuru ki tareekh se pehle nahi ho sakti.'
+    : days > MAX_DAYS ? `Trip ${MAX_DAYS} din se lamba nahi ho sakta (tumne ${days} din chune).`
+    : null;
+
+  const onStart = (iso: string) => {
+    setStart(iso);
+    if (daysInclusive(iso, end) < 1) setEnd(iso); // end can never be before start
+  };
+
   const generate = async () => {
-    if (!region) return;
+    if (!region || problem) return;
     setBusy(true);
     setError(null);
     try {
-      // takes a few seconds: candidates, K-Means, OSRM travel times, sequencing
-      const { data } = await api.post('/itineraries/solo', { regionSlug: region, days });
+      // takes a few seconds: candidates, OSRM road times, day grouping, sequencing
+      const { data } = await api.post('/itineraries/solo', { regionSlug: region, startDate: start, endDate: end });
       router.replace({ pathname: '/itinerary/[id]', params: { id: data.itinerary._id } });
     } catch (e: any) {
       setError(e?.response?.data?.message ?? e?.message ?? 'Itinerary nahi bani');
@@ -66,28 +84,34 @@ export default function PlanTrip() {
         {regions.length === 0 && <Text style={s.muted}>Abhi koi region seed nahi hua.</Text>}
       </View>
 
-      <Text style={s.label}>Kitne din?</Text>
-      <View style={s.stepper}>
-        <Pressable style={s.stepBtn} onPress={() => setDays((d) => Math.max(1, d - 1))}>
-          <Text style={s.stepText}>−</Text>
-        </Pressable>
-        <Text style={s.days}>{days}</Text>
-        <Pressable style={s.stepBtn} onPress={() => setDays((d) => Math.min(MAX_DAYS, d + 1))}>
-          <Text style={s.stepText}>+</Text>
-        </Pressable>
+      <Text style={s.label}>Kab se kab tak?</Text>
+      <View style={s.dates}>
+        <DateField label="Shuru" value={start} min={today} onChange={onStart} />
+        <DateField label="Khatam" value={end} min={start} max={addDaysISO(start, MAX_DAYS - 1)} onChange={setEnd} />
       </View>
+      {problem ? (
+        <Text style={s.error}>{problem}</Text>
+      ) : (
+        <Text style={s.summary}>
+          {days} din: {formatDay(start)} se {formatDay(end)} tak
+        </Text>
+      )}
 
       <View style={s.card}>
         <Text style={s.label}>Tumhari pasand</Text>
         <Text style={s.muted}>
-          {user?.interests?.length ? user.interests.map((i) => i.replace(/_/g, ' ')).join(', ') : 'Abhi koi interest nahi'}
+          {user?.interests?.length ? user.interests.map(categoryLabel).join(', ') : 'Abhi koi interest nahi'}
         </Text>
         <Text style={[s.muted, { marginTop: 4 }]}>Pace: {user?.pace ?? '-'}</Text>
       </View>
 
       {error && <Text style={s.error}>{error}</Text>}
 
-      <Pressable style={[s.cta, (busy || !region) && { opacity: 0.6 }]} onPress={generate} disabled={busy || !region}>
+      <Pressable
+        style={[s.cta, (busy || !region || !!problem) && { opacity: 0.6 }]}
+        onPress={generate}
+        disabled={busy || !region || !!problem}
+      >
         {busy ? (
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
             <ActivityIndicator color="#fff" />
@@ -112,12 +136,10 @@ const s = StyleSheet.create({
   chipOn: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   chipText: { color: '#0f172a', fontWeight: '600' },
   chipTextOn: { color: '#fff' },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-  stepBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  stepText: { fontSize: 22, fontWeight: '700' },
-  days: { fontSize: 24, fontWeight: '800', minWidth: 30, textAlign: 'center' },
+  dates: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  summary: { color: '#0f172a', fontWeight: '600', marginTop: 10 },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 20, borderWidth: 1, borderColor: '#e2e8f0' },
-  error: { color: '#b91c1c', marginTop: 14 },
+  error: { color: '#b91c1c', marginTop: 12 },
   cta: { backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
   ctaText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 });
