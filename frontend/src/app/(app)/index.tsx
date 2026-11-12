@@ -90,6 +90,9 @@ export default function Home() {
           <Text style={s.sectionTitle}>Your Trips</Text>
           <Text style={s.sectionSub}>Plan and manage your itineraries</Text>
         </View>
+        <Pressable onPress={() => router.push('/my-trips' as any)}>
+          <Text>Meri trips</Text>
+        </Pressable>
         <Pressable onPress={() => router.push('/plan-trip')}><Text>Plan a trip</Text></Pressable>
       </View>
 

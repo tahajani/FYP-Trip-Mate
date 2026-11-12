@@ -112,6 +112,23 @@ export default function ItineraryScreen() {
     }
   };
 
+  const regenerate = async (dayNo: number) => {
+  setSaving(true);
+  setError(null);
+  try {
+    const { data } = await api.post(`/itineraries/${id}/days/${dayNo}/regenerate`);
+    setTrip(data.itinerary);
+    setDays(data.itinerary.days);
+    setEditWarnings(data.warnings ?? []);
+    setDirty(false);
+    setOpenKey(null);
+  } catch (e: any) {
+    setError(e?.response?.data?.message ?? 'Din dobara nahi bana');
+  } finally {
+    setSaving(false);
+  }
+};
+
   // ---- map + search centre ----
   const markers: MapMarker[] = useMemo(() => {
     const shown = sel === 'all' ? days : days.filter((d) => d.day === sel);
@@ -267,6 +284,12 @@ export default function ItineraryScreen() {
                 : ''}
               {dirty && editable ? ' (safar ka waqt save ke baad update hoga)' : ''}
             </Text>
+
+            {editable && (
+              <Pressable style={[s.act, { alignSelf: 'flex-start', marginTop: 8 }]} onPress={() => regenerate(day.day)} disabled={saving || dirty}>
+                <Text style={s.actText}>↻ Is din ko dobara banao{dirty ? ' (pehle save karo)' : ''}</Text>
+              </Pressable>
+            )}
 
             {day.places.length === 0 && <Text style={s.muted}>Is din mein abhi koi jagah nahi.</Text>}
 
