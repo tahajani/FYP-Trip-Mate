@@ -4,7 +4,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import api from '../../../services/api';
 import LeafletMap from '../../../components/LeafletMap';
 import PlaceSearch from '../../../components/PlaceSearch';
-import { MapMarker } from '../../../components/leafletHtml';
+import { MapMarker, RouteLine } from '../../../components/leafletHtml';
+import { useDayRoutes } from '../../../hooks/useDayRoutes';
 import { SearchResult, Trip, TripDay, TripPlace } from '../../../types/trip';
 import { formatDay, formatShort } from '../../../utils/dates';
 import { categoryLabel } from '../../../utils/labels';
@@ -130,6 +131,36 @@ export default function ItineraryScreen() {
     };
   }, [days]);
 
+  // ---- road routes (OSRM, backend falls back to straight lines) ----
+  const { routes, loading: routesLoading, failed: routesFailed, refresh: refreshRoutes } = useDayRoutes(days, sel);
+
+  // A route is used only if it matches the stops on screen (legs = stops - 1); otherwise it is stale after an edit.
+  const routeOf = (day: TripDay) => {
+    const r = routes[day.day];
+    return r && r.legs.length === day.places.length - 1 ? r : undefined;
+  };
+
+  const routeLines: RouteLine[] = useMemo(() => {
+    const shown = sel === 'all' ? days : days.filter((d) => d.day === sel);
+    return shown.map((d) => {
+      const r = routes[d.day];
+      const usable = r && r.legs.length === d.places.length - 1;
+      if (usable) return { color: colorOf(d.day), coords: r.coordinates, road: r.source === 'osrm' };
+      // loading / failed / stale: dashed straight line between the stops
+      const straight = d.places
+        .filter((p) => p.location && Number.isFinite(p.location.lat) && Number.isFinite(p.location.lon))
+        .map((p) => [p.location.lat, p.location.lon] as [number, number]);
+      return { color: colorOf(d.day), coords: straight, road: false };
+    });
+  }, [days, sel, routes]);
+
+  // One label for the map: every shown day with 2+ stops must have a real road route to say "OSRM".
+  const shownWithRoute = (sel === 'all' ? days : days.filter((d) => d.day === sel)).filter((d) => d.places.length >= 2);
+  const allRoad = shownWithRoute.length > 0 && shownWithRoute.every((d) => routeOf(d)?.source === 'osrm');
+  const routeNote = shownWithRoute
+    .map((d) => routeOf(d)?.warnings?.[0])
+    .find((w): w is string => !!w);
+
   if (loading) return <ActivityIndicator style={{ marginTop: 80 }} />;
   if (!trip) return <Text style={s.error}>{error ?? 'Itinerary nahi mili'}</Text>;
 
@@ -150,8 +181,25 @@ export default function ItineraryScreen() {
         </Text>
       )}
 
-      <LeafletMap markers={markers} height={280} />
-      <Text style={s.hint}>Lakeer seedhi line hai (sadak ka raasta nahi). Marker dabao to naam dikhega.</Text>
+      <LeafletMap markers={markers} routes={routeLines} height={280} />
+      {shownWithRoute.length === 0 ? (
+        <Text style={s.hint}>Marker dabao to naam dikhega.</Text>
+      ) : routesLoading ? (
+        <Text style={s.hint}>Sadak ka raasta load ho raha hai... (tab tak seedhi line)</Text>
+      ) : allRoad ? (
+        <Text style={s.ok}>━ Sadak (OSRM): asli sadak ka raasta. Marker dabao to naam dikhega.</Text>
+      ) : (
+        <View style={s.banner}>
+          <Text style={s.bannerText}>
+            ┅ Seedhi line (andaza): sadak ka raasta nahi mila.
+            {routesFailed ? ' Server se route request fail hui (backend /api/routes/day check karo).' : ''}
+          </Text>
+          {routeNote ? <Text style={[s.hint, { color: '#92400e' }]}>{routeNote}</Text> : null}
+          <Pressable style={s.bannerBtn} onPress={refreshRoutes}>
+            <Text style={s.bannerBtnText}>Sadak ka raasta dobara try karo</Text>
+          </Pressable>
+        </View>
+      )}
 
       {trip.travelTimeSource === 'haversine' ? (
         <View style={s.banner}>
@@ -214,6 +262,9 @@ export default function ItineraryScreen() {
             </View>
             <Text style={s.hint}>
               {day.places.length} jagah · visit {visit} min · safar {Math.round(travel)} min
+              {routeOf(day)
+                ? ` · ${routeOf(day)!.totalKm.toFixed(1)} km ${routeOf(day)!.source === 'osrm' ? '(sadak)' : '(andaza)'}`
+                : ''}
               {dirty && editable ? ' (safar ka waqt save ke baad update hoga)' : ''}
             </Text>
 
@@ -234,6 +285,9 @@ export default function ItineraryScreen() {
                       <Text style={s.meta}>
                         {p.kind.replace(/_/g, ' ')} · {p.visitMinutes} min
                         {i > 0 ? ` · ${p.travelMinutesFromPrevious ?? 0} min safar` : ''}
+                        {i > 0 && routeOf(day)
+                          ? ` · ${routeOf(day)!.legs[i - 1].km.toFixed(1)} km ${routeOf(day)!.source === 'osrm' ? 'sadak' : '(andaza)'}`
+                          : ''}
                       </Text>
                       <View style={s.pills}>
                         {matched.map((c) => (

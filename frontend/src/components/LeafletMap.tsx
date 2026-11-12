@@ -1,23 +1,18 @@
-// Phones (Android / iOS): Leaflet inside a WebView.
-// Needs:  npx expo install react-native-webview
-// (On web, Metro uses LeafletMap.web.tsx instead of this file.)
+// Native (Android / iOS): the same Leaflet page inside a WebView.
+// NOTE: I have not seen your current LeafletMap.tsx, so this is written from the handoff description.
+// If your version had extra props or styling, merge only the `routes` prop and the useMemo.
+import React, { useMemo } from 'react';
 import { View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { buildLeafletHtml, MapMarker } from './leafletHtml';
+import { buildLeafletHtml, MapMarker, RouteLine } from './leafletHtml';
 
-type Props = { markers: MapMarker[]; height?: number };
+type Props = { markers: MapMarker[]; routes?: RouteLine[]; height?: number };
 
-export default function LeafletMap({ markers, height = 280 }: Props) {
-  const html = buildLeafletHtml(markers);
+export default function LeafletMap({ markers, routes, height = 280 }: Props) {
+  const html = useMemo(() => buildLeafletHtml(markers, routes), [markers, routes]);
   return (
     <View style={{ height, borderRadius: 12, overflow: 'hidden', backgroundColor: '#e5e7eb' }}>
-      <WebView
-        originWhitelist={['*']}
-        source={{ html, baseUrl: 'https://localhost' }}
-        javaScriptEnabled
-        nestedScrollEnabled
-        style={{ flex: 1 }}
-      />
+      <WebView originWhitelist={['*']} source={{ html }} style={{ flex: 1 }} javaScriptEnabled />
     </View>
   );
 }

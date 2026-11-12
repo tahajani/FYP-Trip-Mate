@@ -1,12 +1,13 @@
 // Web: the same Leaflet page inside an <iframe>.
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View } from 'react-native';
-import { buildLeafletHtml, MapMarker } from './leafletHtml';
+import { buildLeafletHtml, MapMarker, RouteLine } from './leafletHtml';
 
-type Props = { markers: MapMarker[]; height?: number };
+type Props = { markers: MapMarker[]; routes?: RouteLine[]; height?: number };
 
-export default function LeafletMap({ markers, height = 280 }: Props) {
-  const html = buildLeafletHtml(markers);
+export default function LeafletMap({ markers, routes, height = 280 }: Props) {
+  // memoised so the iframe is not reloaded on every unrelated re-render of the screen
+  const html = useMemo(() => buildLeafletHtml(markers, routes), [markers, routes]);
   return (
     <View style={{ height, borderRadius: 12, overflow: 'hidden', backgroundColor: '#e5e7eb' }}>
       {React.createElement('iframe', {
