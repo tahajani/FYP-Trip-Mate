@@ -29,6 +29,7 @@ function cleanPlace(p, index, dayNo) {
     location: { lat, lon },
     visitMinutes: Math.min(240, Math.max(15, Number(p.visitMinutes) || 60)),
     score: isNum(score) ? score : 0,
+    matched: Array.isArray(p.matched) ? p.matched.filter((c) => typeof c === 'string').slice(0, 10) : [],
     // places already in the itinerary keep their source; places added by the user are 'manual'
     source: p.source === 'solo' || p.source === 'group' ? p.source : 'manual',
   };
@@ -95,6 +96,7 @@ async function recomputeDays(existing, incoming) {
     }
     out.push({
       day: inc.day,
+      ...(base.date ? { date: base.date } : {}), // the date of a day never changes when places are adjusted
       places: placesOut,
       capacityMinutes: base.capacityMinutes,
       visitMinutes: visit,

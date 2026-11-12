@@ -97,7 +97,8 @@ async function seededSearch(q, lat, lon) {
 
 router.get('/regions', auth, async (req, res) => {
   try {
-    const regions = await Region.find({}).select('slug name').lean();
+    // only regions whose POIs have been seeded can be planned (loadRegionPois refuses the others)
+    const regions = await Region.find({ seeded: true }).select('slug name').lean();
     res.json(regions);
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -65,6 +65,21 @@ test('a place added by the user has no poiId and source manual; existing places 
   expect(b.source).toBe('manual');
 });
 
+test('the date of a day and the matched interests of a place survive an edit', async () => {
+  getDurationMatrix.mockResolvedValue({ durationsMin: [[0, 3], [3, 0]], source: 'osrm', warnings: [] });
+  const dated = [
+    { day: 1, date: '2026-11-12', capacityMinutes: 270, places: [] },
+    { day: 2, date: '2026-11-13', capacityMinutes: 270, places: [] },
+  ];
+  const r = await recomputeDays(dated, [
+    { day: 1, places: [place('A', 33.7, 73.0, { matched: ['museums_art'] }), place('B', 33.71, 73.01)] },
+    { day: 2, places: [] },
+  ]);
+  expect(r.days.map((d) => d.date)).toEqual(['2026-11-12', '2026-11-13']);
+  expect(r.days[0].places[0].matched).toEqual(['museums_art']);
+  expect(r.days[0].places[1].matched).toEqual([]);
+});
+
 test('rejects bad input', async () => {
   await expect(recomputeDays(existing, 'x')).rejects.toThrow(/array/);
   await expect(recomputeDays(existing, [{ day: 1, places: [] }])).rejects.toThrow(/tadaad/);

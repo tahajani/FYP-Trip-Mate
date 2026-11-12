@@ -5,7 +5,11 @@ const DEFAULT_OSRM_URL = 'https://router.project-osrm.org';
 const FALLBACK_SPEED_KMH = 30; // [Suggested] average city speed used only when OSRM is unavailable
 const ROAD_FACTOR = 1.3; // my assumption: roads are longer than straight lines; set 1 to disable
 const MAX_POINTS = 100; // assumption about the server's table-size limit; check your server's docs
-const TIMEOUT_MS = 8000;
+const TIMEOUT_MS = 10000;
+const ATTEMPTS = 2; // the public demo server is sometimes slow; one retry avoids most needless fallbacks
+const RETRY_DELAY_MS = 600;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function assertPoints(points) {
   points.forEach((p, i) => {
@@ -54,12 +58,15 @@ function isValidMatrix(m, n) {
 // points: [{ lat, lon }]. OSRM wants lon,lat in the URL, handled here.
 // Returns { durationsMin, distancesKm, source: 'osrm' | 'haversine' | 'none', warnings: [] }.
 // Matrices can be asymmetric (one-way roads), so sequencing code must not assume symmetry.
+// A network error, a timeout or an HTTP 5xx/429 is tried again (options.attempts) before the estimate is used.
 async function getDurationMatrix(points, options = {}) {
   const {
     baseUrl = process.env.OSRM_URL || DEFAULT_OSRM_URL,
     fetchImpl = globalThis.fetch,
     timeoutMs = TIMEOUT_MS,
     maxPoints = MAX_POINTS,
+    attempts = ATTEMPTS,
+    retryDelayMs = RETRY_DELAY_MS,
     speedKmh,
     roadFactor,
   } = options;
@@ -75,11 +82,19 @@ async function getDurationMatrix(points, options = {}) {
   const url = `${baseUrl.replace(/\/+$/, '')}/table/v1/driving/${coords}?annotations=duration,distance`;
 
   let res;
-  try {
-    res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
-  } catch (err) {
-    return fallback(points, fbOpts, `OSRM unreachable: ${err.message}`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt++) {
+    try {
+      res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+      lastError = null;
+      if (res.ok || (res.status < 500 && res.status !== 429)) break; // other 4xx will not improve by retrying
+    } catch (err) {
+      res = undefined;
+      lastError = err;
+    }
+    if (attempt < attempts) await sleep(retryDelayMs);
   }
+  if (!res) return fallback(points, fbOpts, `OSRM unreachable: ${lastError ? lastError.message : 'no response'}`);
   if (!res.ok) return fallback(points, fbOpts, `OSRM returned HTTP ${res.status}`);
 
   let body;
