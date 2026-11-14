@@ -17,6 +17,7 @@ const placeSchema = new mongoose.Schema({
   source: { type: String, enum: ['solo', 'consensus', 'roundrobin', 'manual'], default: 'solo' },
   selectedFor: { type: ObjectId, ref: 'User', default: null }, // whose round-robin turn
   memberScores: [{ _id: false, userId: { type: ObjectId, ref: 'User' }, score: Number }],
+  reason: String,
 }, { _id: false });
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -32,7 +33,7 @@ const daySchema = new mongoose.Schema({
 
 const itinerarySchema = new mongoose.Schema({
   ownerId: { type: ObjectId, ref: 'User', required: true },
-  groupId: { type: ObjectId, ref: 'Group', default: null },
+  groupId: { type: ObjectId, ref: 'Group', default: null, index: true },
   type: { type: String, enum: ['solo', 'group'], required: true },
   regionId: { type: ObjectId, ref: 'Region' },
   regionSlug: String,

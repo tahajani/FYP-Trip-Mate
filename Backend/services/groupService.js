@@ -1,6 +1,5 @@
-// Pure rules on a group document; routes only load/save.
-const { MAX_GROUP_SIZE } = require('./groupScoring');
-
+// Pure rules on a Group document (ownerId, members[{userId,status,invitedBy,joinedAt}], maxMembers).
+// Routes only load/save. status: 'pending' | 'accepted' | 'declined'.
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -10,34 +9,68 @@ class HttpError extends Error {
 
 const same = (a, b) => String(a) === String(b);
 const find = (g, uid) => g.members.find((m) => same(m.userId, uid));
+// pending invites hold a seat too, so a person who accepts can never find the group full; declined ones do not
+const seats = (g, exceptId) =>
+  g.members.filter((m) => m.status !== 'declined' && !(exceptId && same(m.userId, exceptId))).length;
+const joinedTime = (m) => (m.joinedAt ? new Date(m.joinedAt).getTime() : Number.MAX_SAFE_INTEGER);
 
-// accepted AND invited members both hold a seat, so invites cannot overfill the group
+// owner only. A person who declined earlier can be invited again.
 function invite(g, actorId, targetId) {
-  const me = find(g, actorId);
-  if (!me || me.status !== 'accepted' || me.role !== 'owner') throw new HttpError(403, 'Sirf group owner invite kar sakta hai');
-  if (find(g, targetId)) throw new HttpError(409, 'Ye user pehle se group me hai ya invited hai');
-  if (g.members.length >= MAX_GROUP_SIZE) throw new HttpError(409, `Group me zyada se zyada ${MAX_GROUP_SIZE} log ho sakte hain`);
-  g.members.push({ userId: targetId, status: 'invited', role: 'member' });
+  if (!same(g.ownerId, actorId)) throw new HttpError(403, 'Only group owner can invite!');
+  const existing = find(g, targetId);
+  if (existing && existing.status !== 'declined') throw new HttpError(409, 'This user is already in this group or invited.');
+  if (seats(g) >= g.maxMembers) throw new HttpError(409, `Group is full (${g.maxMembers} log)`);
+  if (existing) {
+    existing.status = 'pending';
+    existing.invitedBy = actorId;
+  } else {
+    g.members.push({ userId: targetId, status: 'pending', invitedBy: actorId });
+  }
 }
 
 function accept(g, uid) {
   const m = find(g, uid);
-  if (!m) throw new HttpError(404, 'Tumhe is group ka invite nahi mila');
-  if (m.status === 'accepted') throw new HttpError(409, 'Tum pehle se group me ho');
+  if (!m || m.status === 'declined') throw new HttpError(404, 'You are not invited by this group.');
+  if (m.status === 'accepted') throw new HttpError(409, 'You are already in this group.');
+  if (g.members.filter((x) => x.status === 'accepted').length >= g.maxMembers) throw new HttpError(409, 'Group is full.');
   m.status = 'accepted';
   m.joinedAt = new Date();
 }
 
-// Works for accepted members and for declining an invite. If the owner leaves, the longest-standing accepted
-// member becomes owner. If nobody accepted is left, the group should be deleted.
+function decline(g, uid) {
+  const m = find(g, uid);
+  if (!m || m.status === 'declined') throw new HttpError(404, 'You are not invited in this group.');
+  if (m.status === 'accepted') throw new HttpError(409, 'You are a group member, for leaving group press leave.');
+  m.status = 'declined';
+}
+
+// Accepted member leaves. If the owner leaves, the accepted member who joined first becomes owner.
+// Returns { deleted: true } when nobody accepted is left (the route then deletes the group).
 function leave(g, uid) {
   const i = g.members.findIndex((m) => same(m.userId, uid));
-  if (i < 0) throw new HttpError(404, 'Tum is group ke member nahi ho');
-  const [gone] = g.members.splice(i, 1);
+  const me = i < 0 ? null : g.members[i];
+  if (!me || me.status === 'declined') throw new HttpError(404, 'You are not a member in this group.');
+  if (me.status === 'pending') throw new HttpError(409, 'He is invited, decline him.');
+  g.members.splice(i, 1);
   const accepted = g.members.filter((m) => m.status === 'accepted');
   if (accepted.length === 0) return { deleted: true };
-  if (gone.role === 'owner') accepted[0].role = 'owner';
+  if (same(g.ownerId, uid)) {
+    g.ownerId = accepted.slice().sort((a, b) => joinedTime(a) - joinedTime(b))[0].userId;
+  }
   return { deleted: false };
 }
 
-module.exports = { HttpError, invite, accept, leave };
+// Anyone who has the group's inviteCode joins directly (no invite needed).
+function joinByCode(g, uid) {
+  const m = find(g, uid);
+  if (m && m.status === 'accepted') throw new HttpError(409, 'You are already in this group.');
+  if (seats(g, uid) >= g.maxMembers) throw new HttpError(409, `Group is full. (${g.maxMembers} log)`);
+  if (m) {
+    m.status = 'accepted';
+    m.joinedAt = new Date();
+  } else {
+    g.members.push({ userId: uid, status: 'accepted', joinedAt: new Date() });
+  }
+}
+
+module.exports = { HttpError, invite, accept, decline, leave, joinByCode };

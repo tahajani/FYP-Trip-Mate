@@ -5,7 +5,7 @@ const { soloScore, poolSize } = require('./scoring');
 
 const PACES = ['relaxed', 'moderate', 'fast'];
 const CONSENSUS_MIN = 0.5; // [Decided] consensus = every member scores the place >= 0.5
-const MAX_GROUP_SIZE = 4; // [Suggested] confirm
+const MAX_GROUP_SIZE = 6; // [Suggested] confirm
 
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 const r3 = (x) => Math.round(x * 1000) / 1000;

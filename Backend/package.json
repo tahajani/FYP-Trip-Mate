@@ -26,6 +26,7 @@
     "socket.io": "^4.8.4"
   },
   "devDependencies": {
-    "jest": "^30.5.2"
+    "jest": "^30.5.2",
+    "socket.io-client": "^4.8.4"
   }
 }

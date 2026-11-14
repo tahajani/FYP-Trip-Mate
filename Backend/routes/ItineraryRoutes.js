@@ -142,6 +142,8 @@ router.post('/:id/days/:day/regenerate', auth, async (req, res) => {
     if (!it) return res.status(404).json({ message: 'Not found' });
     if (String(it.ownerId) !== userIdOf(req)) return res.status(403).json({ message: 'Ye itinerary tumhari nahi hai' });
 
+    if (it.groupId) return res.status(400).json({ message: `Group itinerary's day cannot regenerate now.` });
+
     const dayNo = Number(req.params.day);
     const existing = it.days.map((d) => (d.toObject ? d.toObject() : d));
     if (!existing.some((d) => d.day === dayNo)) return res.status(404).json({ message: 'Is din ka data nahi mila' });

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const { selectGroupCandidates, slowestPace, memberScoreMatrix } = require('../services/groupScoring');
-const { invite, accept, leave, HttpError } = require('../services/groupService');
+const { invite, accept, decline, leave, joinByCode, HttpError } = require('../services/groupService');
 const Group = require('../models/Group');
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
@@ -85,53 +85,114 @@ test('group size is limited to 2..4 and fewer places than N gives a warning', ()
 });
 
 // ---- invite / accept / leave ----
+// ---- group state rules (your Group model: pending / accepted / declined, ownerId, maxMembers, inviteCode) ----
 const id = () => new mongoose.Types.ObjectId();
-const mk = (ownerId) => new Group({ name: 'Trip', members: [{ userId: ownerId, status: 'accepted', role: 'owner' }] });
+const mk = (ownerId) => Group.buildForOwner('Trip', ownerId);
+const status = (g, u) => g.members.find((m) => String(m.userId) === String(u)).status;
 
-test('invite: only the owner, no duplicates, max 4 seats (invited users hold a seat)', () => {
+test('buildForOwner: owner is accepted, group is valid, inviteCode is 8 hex characters', () => {
+  const o = id();
+  const g = mk(o);
+  assert.equal(g.validateSync(), undefined);
+  assert.equal(String(g.ownerId), String(o));
+  assert.equal(status(g, o), 'accepted');
+  assert.match(g.inviteCode, /^[0-9a-f]{8}$/);
+  assert.equal(g.maxMembers, 4);
+});
+
+test('invite: owner only, no duplicates, pending invites hold a seat, declined can be invited again', () => {
   const [o, u1, u2, u3, u4] = [id(), id(), id(), id(), id()];
   const g = mk(o);
   assert.throws(() => invite(g, u1, u2), (e) => e instanceof HttpError && e.status === 403);
   invite(g, o, u1);
+  assert.equal(status(g, u1), 'pending');
+  assert.equal(String(g.members[1].invitedBy), String(o));
   assert.throws(() => invite(g, o, u1), (e) => e.status === 409);
   invite(g, o, u2);
-  invite(g, o, u3);
-  assert.throws(() => invite(g, o, u4), /zyada se zyada 4/);
+  invite(g, o, u3); // owner + 3 pending = 4 seats
+  assert.throws(() => invite(g, o, u4), /full/);
   assert.equal(g.validateSync(), undefined);
+  decline(g, u3); // a seat is free again
+  invite(g, o, u4);
+  decline(g, u4);
+  invite(g, o, u3); // u3 declined before: invited again, the same entry turns pending
+  assert.equal(status(g, u3), 'pending');
+  assert.equal(g.members.filter((m) => String(m.userId) === String(u3)).length, 1);
 });
 
-test('accept: invited -> accepted; strangers and repeats are rejected', () => {
-  const [o, u1, x] = [id(), id(), id()];
+test('accept: pending -> accepted; strangers, declined users and repeats are rejected', () => {
+  const [o, u1, u2, x] = [id(), id(), id(), id()];
   const g = mk(o);
   invite(g, o, u1);
+  invite(g, o, u2);
+  decline(g, u2);
   assert.throws(() => accept(g, x), (e) => e.status === 404);
+  assert.throws(() => accept(g, u2), (e) => e.status === 404);
   accept(g, u1);
-  assert.equal(g.members[1].status, 'accepted');
+  assert.equal(status(g, u1), 'accepted');
   assert.ok(g.members[1].joinedAt instanceof Date);
   assert.throws(() => accept(g, u1), (e) => e.status === 409);
 });
 
-test('leave: owner leaves -> next accepted member becomes owner; last one out deletes; invite can be declined', () => {
-  const [o, u1, u2] = [id(), id(), id()];
+test('decline: only a pending invite; a member must use leave', () => {
+  const [o, u1, x] = [id(), id(), id()];
+  const g = mk(o);
+  invite(g, o, u1);
+  decline(g, u1);
+  assert.equal(status(g, u1), 'declined');
+  assert.throws(() => decline(g, u1), (e) => e.status === 404);
+  assert.throws(() => decline(g, x), (e) => e.status === 404);
+  assert.throws(() => decline(g, o), (e) => e.status === 409);
+});
+
+test('leave: member leaves; owner leaves -> earliest joined accepted member becomes owner; last one out deletes', () => {
+  const [o, u1, u2, u3] = [id(), id(), id(), id()];
   const g = mk(o);
   invite(g, o, u1);
   invite(g, o, u2);
+  invite(g, o, u3);
   accept(g, u1);
-  assert.deepEqual(leave(g, u2), { deleted: false }); // declined invite
+  accept(g, u2);
+  g.members.find((m) => String(m.userId) === String(u2)).joinedAt = new Date(Date.now() - 1e6); // u2 joined before u1
+  assert.throws(() => leave(g, u3), (e) => e.status === 409); // still pending: decline instead
+  decline(g, u3);
+  assert.throws(() => leave(g, u3), (e) => e.status === 404);
   assert.deepEqual(leave(g, o), { deleted: false });
-  assert.equal(g.members[0].role, 'owner');
+  assert.equal(String(g.ownerId), String(u2));
   assert.equal(g.validateSync(), undefined);
-  assert.deepEqual(leave(g, u1), { deleted: true });
-  assert.throws(() => leave(g, u1), (e) => e.status === 404);
+  assert.deepEqual(leave(g, u1), { deleted: false });
+  assert.equal(String(g.ownerId), String(u2));
+  assert.deepEqual(leave(g, u2), { deleted: true });
 });
 
-test('Group schema: owner count, size, duplicates, name', () => {
+test('joinByCode: joins directly; full / already-in are rejected; a pending invite becomes accepted', () => {
+  const [o, u1, u2, u3, u4] = [id(), id(), id(), id(), id()];
+  const g = mk(o);
+  joinByCode(g, u1);
+  assert.equal(status(g, u1), 'accepted');
+  assert.throws(() => joinByCode(g, u1), (e) => e.status === 409);
+  invite(g, o, u2);
+  joinByCode(g, u2); // already invited: takes the same seat
+  assert.equal(status(g, u2), 'accepted');
+  assert.equal(g.members.length, 3);
+  joinByCode(g, u3);
+  assert.throws(() => joinByCode(g, u4), /full/);
+  assert.equal(g.validateSync(), undefined);
+});
+
+test('Group schema: owner must be accepted, size limit, duplicates, name, maxMembers, days', () => {
   const [a, b, c, d, e] = [id(), id(), id(), id(), id()];
-  const m = (u, role = 'member') => ({ userId: u, status: 'accepted', role });
-  assert.equal(new Group({ name: 'ok', members: [m(a, 'owner'), m(b)] }).validateSync(), undefined);
-  assert.ok(new Group({ name: 'ok', members: [m(a), m(b)] }).validateSync().errors['members']); // no owner
-  assert.ok(new Group({ name: 'ok', members: [m(a, 'owner'), m(b, 'owner')] }).validateSync().errors['members']); // two owners
-  assert.ok(new Group({ name: 'ok', members: [m(a, 'owner'), m(b), m(c), m(d), m(e)] }).validateSync().errors['members']); // 5
-  assert.ok(new Group({ name: 'ok', members: [m(a, 'owner'), m(a)] }).validateSync().errors['members']); // duplicate
-  assert.ok(new Group({ members: [m(a, 'owner')] }).validateSync().errors['name']);
+  const m = (u, st = 'accepted') => ({ userId: u, status: st });
+  const grp = (extra) => new Group({ name: 'ok', ownerId: a, members: [m(a), m(b)], ...extra });
+  assert.equal(grp({}).validateSync(), undefined);
+  assert.ok(grp({ members: [m(a, 'pending'), m(b)] }).validateSync().errors['members']); // owner not accepted
+  assert.ok(grp({ members: [m(b), m(c)] }).validateSync().errors['members']); // owner not a member at all
+  assert.ok(grp({ members: [m(a), m(b), m(c), m(d), m(e)] }).validateSync().errors['members']); // 5 accepted > 4
+  assert.equal(grp({ members: [m(a), m(b), m(c), m(d), m(e, 'pending')] }).validateSync(), undefined); // the DB rule counts accepted only; the service keeps pending within the seats
+  assert.ok(grp({ members: [m(a), m(a)] }).validateSync().errors['members']); // duplicate
+  assert.ok(grp({ name: undefined }).validateSync().errors['name']);
+  assert.ok(grp({ maxMembers: 5 }).validateSync().errors['maxMembers']);
+  assert.ok(grp({ maxMembers: 1 }).validateSync().errors['maxMembers']);
+  assert.ok(grp({ days: 15 }).validateSync().errors['days']);
+  assert.equal(grp({ days: 3, regionSlug: 'islamabad' }).validateSync(), undefined);
 });
