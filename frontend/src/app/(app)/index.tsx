@@ -2,6 +2,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet, Alert, Platform } from '
 import { Redirect, useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { INTERESTS, PACES } from '../../constants/interests';
+import TripsSection from '../../components/TripsSection';
 import { DESTINATIONS } from '../../constants/destinations';
 import DestinationCard from '../../components/DestinationCard';
 import { colors } from '../../components/auth-styles';
@@ -90,19 +91,11 @@ export default function Home() {
           <Text style={s.sectionTitle}>Your Trips</Text>
           <Text style={s.sectionSub}>Plan and manage your itineraries</Text>
         </View>
-        <Pressable onPress={() => router.push('/my-trips' as any)}>
-          <Text>Meri trips</Text>
-        </Pressable>
-        <Pressable onPress={() => router.push('/plan-trip')}><Text>Plan a trip</Text></Pressable>
+        <Pressable onPress={() => router.push('/groups' as any)}><Text>Groups</Text></Pressable>
+        <Pressable onPress={() => router.push('/plan-trip' as any)}><Text>Plan a trip</Text></Pressable>
       </View>
 
-      <View style={s.empty}>
-        <Text style={{ fontSize: 40 }}>🗺️</Text>
-        <Text style={s.emptyTitle}>No trips yet</Text>
-        <Text style={s.emptySub}>
-          Your planned trips will show up here once itinerary planning is ready.
-        </Text>
-      </View>
+      <TripsSection />
     </ScrollView>
   );
 }
