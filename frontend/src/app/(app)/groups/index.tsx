@@ -34,10 +34,9 @@ export default function GroupsScreen() {
     setJoining(true);
     setError(null);
     try {
-      const { data } = await api.post('/groups/join', { inviteCode: c });
+      const { data } = await api.post('/groups/join', { code: c });
       setCode('');
-      // NOT VERIFIED: assumes the response contains the group (with _id). Falls back to reloading the list.
-      if (data?._id) router.push(`/groups/${data._id}`);
+      if (data?.groupId) router.push(`/groups/${data.groupId}` as any);
       else await load();
     } catch (e) {
       setError(errMsg(e, 'Could not join the group'));

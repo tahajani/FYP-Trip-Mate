@@ -4,6 +4,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import api from '../../../services/api';
 import { getAuthToken, userIdFromToken } from '../../../services/authToken';
 import { confirmAction, errMsg, ui } from '../../../components/ui';
+import SuggestedCompanions from '../../../components/SuggestedCompanions';
 
 type Member = {
   userId: string | { _id: string; name?: string; email?: string }; // populated or plain id (NOT VERIFIED which one the API returns)
@@ -28,9 +29,9 @@ export default function GroupDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [email, setEmail] = useState('');
-  const [days, setDays] = useState('3');
-  const [region, setRegion] = useState('islamabad'); // change to your default region slug
-  const [startDate, setStartDate] = useState(''); // YYYY-MM-DD, optional
+  const [region, setRegion] = useState('lahore');
+  const [startDate, setStartDate] = useState(''); // YYYY-MM-DD
+  const [endDate, setEndDate] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -40,7 +41,6 @@ export default function GroupDetailScreen() {
       const { data } = await api.get(`/groups/${id}`);
       setGroup(data);
       if (data.regionSlug) setRegion(data.regionSlug);
-      if (data.days) setDays(String(data.days));
     } catch (e) {
       setError(errMsg(e, 'Could not load the group'));
     } finally {
@@ -91,13 +91,10 @@ export default function GroupDetailScreen() {
       })
     );
 
-  const generate = () =>
+    const generate = () =>
     act(async () => {
-      const n = parseInt(days, 10);
-      if (!Number.isInteger(n) || n < 1 || n > 14) throw new Error('Days must be between 1 and 14');
-      // NOT VERIFIED: the body fields must match what POST /groups/:id/itinerary reads in groupRoutes.js
-      const body: any = { regionSlug: region.trim(), days: n };
-      if (startDate.trim()) body.startDate = startDate.trim();
+      const body: any = { startDate: startDate.trim(), endDate: endDate.trim() };
+      if (!group.regionSlug) body.regionSlug = region.trim(); // the backend uses the group's region when it has one
       await api.post(`/groups/${id}/itinerary`, body);
     }, 'Group itinerary generated.');
 
@@ -171,6 +168,7 @@ export default function GroupDetailScreen() {
             </Pressable>
           </View>
           {seatsUsed >= group.maxMembers && <Text style={ui.muted}>The group is full (pending invites hold a seat).</Text>}
+          <SuggestedCompanions groupId={String(id)} disabled={seatsUsed >= group.maxMembers} onInvited={load} />
         </>
       )}
 
@@ -186,10 +184,12 @@ export default function GroupDetailScreen() {
 
       {isOwner ? (
         <View style={{ marginTop: 8 }}>
-          <TextInput style={ui.input} value={region} onChangeText={setRegion} placeholder="Region (e.g. islamabad)" autoCapitalize="none" />
-          <TextInput style={ui.input} value={days} onChangeText={setDays} placeholder="Number of days (1-14)" keyboardType="number-pad" />
-          <TextInput style={ui.input} value={startDate} onChangeText={setStartDate} placeholder="Start date YYYY-MM-DD (optional)" autoCapitalize="none" />
-          <Pressable style={[ui.btnGhost, (!canGenerate || busy) && { opacity: 0.5 }]} disabled={!canGenerate || busy} onPress={generate}>
+                    {!group.regionSlug && (
+            <TextInput style={ui.input} value={region} onChangeText={setRegion} placeholder="Region (e.g. lahore)" autoCapitalize="none" />
+          )}
+          <TextInput style={ui.input} value={startDate} onChangeText={setStartDate} placeholder="Start date YYYY-MM-DD" autoCapitalize="none" />
+          <TextInput style={ui.input} value={endDate} onChangeText={setEndDate} placeholder="End date YYYY-MM-DD" autoCapitalize="none" />
+          <Pressable style={[ui.btnGhost, (!canGenerate || busy || !startDate.trim() || !endDate.trim()) && { opacity: 0.5 }]} disabled={!canGenerate || busy || !startDate.trim() || !endDate.trim()} onPress={generate}>
             <Text style={ui.btnGhostText}>{busy ? 'Working...' : group.latestItineraryId ? 'Generate a new itinerary' : 'Generate itinerary'}</Text>
           </Pressable>
           {!canGenerate && <Text style={ui.muted}>At least 2 members must accept before an itinerary can be generated.</Text>}
