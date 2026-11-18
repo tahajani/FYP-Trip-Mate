@@ -1,9 +1,11 @@
+// tests/group.test.js   node --test tests/group.test.js   (no database: schema checks use validateSync)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { selectGroupCandidates, slowestPace, memberScoreMatrix } = require('../services/groupScoring');
+const { selectGroupCandidates, slowestPace, memberScoreMatrix, MAX_GROUP_SIZE } = require('../services/groupScoring');
 const { invite, accept, decline, leave, joinByCode, HttpError } = require('../services/groupService');
 const Group = require('../models/Group');
+const { MAX_MEMBERS } = Group;
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 
@@ -76,18 +78,23 @@ test('a member without interests is left out of the vote, with a warning', () =>
   );
 });
 
-test('group size is limited to 2..4 and fewer places than N gives a warning', () => {
-  assert.throws(() => selectGroupCandidates([member('A')], 1, POIS, opts), /2 to 4/);
-  assert.throws(() => selectGroupCandidates(['A', 'B', 'C', 'D', 'E'].map((i) => member(i)), 1, POIS, opts), /2 to 4/);
+test('group size is limited to 2..MAX_GROUP_SIZE and fewer places than N gives a warning', () => {
+  const range = new RegExp(`2 to ${MAX_GROUP_SIZE}`);
+  assert.throws(() => selectGroupCandidates([member('A')], 1, POIS, opts), range);
+  assert.throws(() => selectGroupCandidates(Array.from({ length: MAX_GROUP_SIZE + 1 }, (_, i) => member('m' + i)), 1, POIS, opts), range);
   const r = selectGroupCandidates([member('A'), member('B')], 1, POIS.slice(0, 2), { scoreFn, poolSizeFn: () => 5 });
   assert.equal(r.places.length, 2);
   assert.match(r.warnings.join(' '), /Sirf 2 jagah/);
 });
 
-// ---- invite / accept / leave ----
 // ---- group state rules (your Group model: pending / accepted / declined, ownerId, maxMembers, inviteCode) ----
 const id = () => new mongoose.Types.ObjectId();
-const mk = (ownerId) => Group.buildForOwner('Trip', ownerId);
+// the seat tests below are written for 4 seats, so the group is set to 4 explicitly (the default is MAX_MEMBERS)
+const mk = (ownerId) => {
+  const g = Group.buildForOwner('Trip', ownerId);
+  g.maxMembers = 4;
+  return g;
+};
 const status = (g, u) => g.members.find((m) => String(m.userId) === String(u)).status;
 
 test('buildForOwner: owner is accepted, group is valid, inviteCode is 8 hex characters', () => {
@@ -97,7 +104,7 @@ test('buildForOwner: owner is accepted, group is valid, inviteCode is 8 hex char
   assert.equal(String(g.ownerId), String(o));
   assert.equal(status(g, o), 'accepted');
   assert.match(g.inviteCode, /^[0-9a-f]{8}$/);
-  assert.equal(g.maxMembers, 4);
+  assert.equal(Group.buildForOwner('x', o).maxMembers, MAX_MEMBERS); // default size
 });
 
 test('invite: owner only, no duplicates, pending invites hold a seat, declined can be invited again', () => {
@@ -187,11 +194,11 @@ test('Group schema: owner must be accepted, size limit, duplicates, name, maxMem
   assert.equal(grp({}).validateSync(), undefined);
   assert.ok(grp({ members: [m(a, 'pending'), m(b)] }).validateSync().errors['members']); // owner not accepted
   assert.ok(grp({ members: [m(b), m(c)] }).validateSync().errors['members']); // owner not a member at all
-  assert.ok(grp({ members: [m(a), m(b), m(c), m(d), m(e)] }).validateSync().errors['members']); // 5 accepted > 4
-  assert.equal(grp({ members: [m(a), m(b), m(c), m(d), m(e, 'pending')] }).validateSync(), undefined); // the DB rule counts accepted only; the service keeps pending within the seats
+  assert.ok(grp({ maxMembers: 4, members: [m(a), m(b), m(c), m(d), m(e)] }).validateSync().errors['members']); // 5 accepted > maxMembers 4
+  assert.equal(grp({ maxMembers: 4, members: [m(a), m(b), m(c), m(d), m(e, 'pending')] }).validateSync(), undefined); // the DB rule counts accepted only; the service keeps pending within the seats
   assert.ok(grp({ members: [m(a), m(a)] }).validateSync().errors['members']); // duplicate
   assert.ok(grp({ name: undefined }).validateSync().errors['name']);
-  assert.ok(grp({ maxMembers: 5 }).validateSync().errors['maxMembers']);
+  assert.ok(grp({ maxMembers: MAX_MEMBERS + 1 }).validateSync().errors['maxMembers']);
   assert.ok(grp({ maxMembers: 1 }).validateSync().errors['maxMembers']);
   assert.ok(grp({ days: 15 }).validateSync().errors['days']);
   assert.equal(grp({ days: 3, regionSlug: 'islamabad' }).validateSync(), undefined);

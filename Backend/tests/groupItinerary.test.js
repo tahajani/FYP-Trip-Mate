@@ -93,6 +93,16 @@ test('the output is valid for the real Itinerary schema (type, ObjectIds, arrays
   assert.equal(doc.satisfaction.length, 3);
 });
 
+test('F16: place score is the mean of the member scores, minScore is the minimum (and >= 0.5 for consensus places)', async () => {
+  const r = await run();
+  for (const p of allPlaces(r)) {
+    const xs = p.memberScores.map((m) => m.score);
+    assert.ok(Math.abs(p.score - xs.reduce((s, x) => s + x, 0) / xs.length) < 0.0011);
+    assert.equal(p.minScore, Math.min(...xs));
+    if (p.source === 'consensus') assert.ok(p.minScore >= 0.5);
+  }
+});
+
 test('deterministic: same input, same itinerary', async () => {
   const a = await run();
   const b = await run();

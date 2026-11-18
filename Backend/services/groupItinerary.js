@@ -121,10 +121,11 @@ async function generateGroupItinerary(input, { getMatrix = getDurationMatrix, op
         location: { lat: r.poi.location.coordinates[1], lon: r.poi.location.coordinates[0] },
         visitMinutes: r.poi.avgVisitDuration,
         travelMinutesFromPrevious: k === 0 ? 0 : Math.round(D[p.order[k - 1]][i]),
-        score: r.score,
+        score: r.score, // F16 [Suggested]: group place score = MEAN of the members' scores
+        minScore: r.minScore, // the worst member's score, shows how fair the place is
         matched,
         source: r.source,
-                selectedFor: r.source === 'consensus' ? null : r.selectedFor, // schema: a user id or null
+        selectedFor: r.source === 'consensus' ? null : r.selectedFor, // schema: a user id or null
         memberScores: voters.map((v) => ({ userId: v.id, score: r.memberScores[v.id] })), // schema: [{ userId, score }]
         reason: r.reason,
       };
