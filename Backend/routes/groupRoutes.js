@@ -110,10 +110,18 @@ router.get('/:id', async (req, res) => {
 router.post('/:id/invite', async (req, res) => {
   try {
     const g = await load(req);
-    const email = String((req.body || {}).email || '').trim().toLowerCase();
-    if (!email) return res.status(400).json({ message: 'email is required' });
-    const target = await User.findOne({ email }).select('_id');
-    if (!target) return res.status(404).json({ message: 'Is email ka koi user nahi mila' });
+        const { userId, email: rawEmail } = req.body || {};
+    let target;
+    if (userId) {
+      if (!require('mongoose').isObjectIdOrHexString(userId)) return res.status(400).json({ message: 'Invalid userId' });
+      target = await User.findById(userId).select('_id');
+      if (!target) return res.status(404).json({ message: 'User nahi mila' });
+    } else {
+      const email = String(rawEmail || '').trim().toLowerCase();
+      if (!email) return res.status(400).json({ message: 'userId or email is required' });
+      target = await User.findOne({ email }).select('_id');
+      if (!target) return res.status(404).json({ message: 'Is email ka koi user nahi mila' });
+    }
     invite(g, uid(req), target._id);
     await g.save();
     res.json({ ok: true, acceptedCount: count(g, 'accepted'), pendingCount: count(g, 'pending') });

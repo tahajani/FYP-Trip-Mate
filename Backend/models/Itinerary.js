@@ -13,6 +13,7 @@ const placeSchema = new mongoose.Schema({
   visitMinutes: Number,
   travelMinutesFromPrevious: { type: Number, default: 0 },
   score: Number, // solo score; for groups the meaning of this field is still [Open] (F16)
+  minScore: Number,
   matched: [{ type: String, enum: CATEGORIES }], // which of the user's chosen interests this place fits
   source: { type: String, enum: ['solo', 'consensus', 'roundrobin', 'manual'], default: 'solo' },
   selectedFor: { type: ObjectId, ref: 'User', default: null }, // whose round-robin turn
