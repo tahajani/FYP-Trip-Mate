@@ -25,6 +25,7 @@ app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth',authRoutes)
 app.use('/api/groups', require('./routes/groupRoutes'));
 app.use('/api/matches', require('./routes/matchRoutes'));
+app.use('/api/agent', require('./routes/agentRoutes'));
 app.use('/api/places', require('./routes/placeRoutes'));
 app.use('/api/routes', require('./routes/routeRoutes'));
 app.use('/api/itineraries', itineraryRoutes)

@@ -4,14 +4,14 @@
   "main": "server.js",
     "scripts": {
     "test": "jest",
-    "test:node": "node --test tests/group.test.js tests/groupItinerary.test.js tests/groupChat.test.js tests/companionMatching.test.js tests/osrmRoute.test.js tests/compareRouting.test.js tests/regenerateDay.test.js",
+    "test:node": "node --test tests/group.test.js tests/groupItinerary.test.js tests/groupChat.test.js tests/companionMatching.test.js tests/agent.test.js tests/osrmRoute.test.js tests/compareRouting.test.js tests/regenerateDay.test.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "jest": {
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "[\\\\/]tests[\\\\/](group|groupItinerary|groupChat|companionMatching|osrmRoute|compareRouting|regenerateDay)\\.test\\.js$"
+      "[\\\\/]tests[\\\\/](group|groupItinerary|groupChat|companionMatching|agent|osrmRoute|compareRouting|regenerateDay)\\.test\\.js$"
     ]
   },
   "keywords": [],
