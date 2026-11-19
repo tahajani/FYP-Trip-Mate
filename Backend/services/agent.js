@@ -15,6 +15,7 @@ const systemPrompt = (user, today = iso(new Date())) => [
   `Available regions: ${REGIONS.join(', ')}.`,
   `The user's interests: ${(user.interests || []).join(', ') || 'not set'}. Today is ${today}.`,
   'Reply in the language the user writes in (English or Roman Urdu). Keep answers short.',
+    'You can only suggest alternatives; you cannot change an itinerary. Tell the user to apply changes in the app.',
 ].join('\n');
 
 const TOOLS = [
@@ -39,6 +40,22 @@ const TOOLS = [
     name: 'explain_conflict',
     description: "Explain why the places of the user's latest group itinerary were chosen: who got which place, and who liked it least.",
     parameters: { type: 'object', properties: {} },
+  } },
+    { type: 'function', function: {
+    name: 'suggest_alternative_place',
+    description: 'Suggest up to 3 other places in a region to replace a place the user does not want. Suggestions only, nothing is changed.',
+    parameters: { type: 'object', properties: {
+      regionSlug: { type: 'string', enum: REGIONS },
+      avoidName: { type: 'string', description: 'Name of the place to replace' },
+    }, required: ['regionSlug', 'avoidName'] },
+  } },
+  { type: 'function', function: {
+    name: 'search_places',
+    description: 'Find places by name or keyword in a region.',
+    parameters: { type: 'object', properties: {
+      regionSlug: { type: 'string', enum: REGIONS },
+      query: { type: 'string', description: 'Part of a place name' },
+    }, required: ['regionSlug', 'query'] },
   } },
 ];
 
@@ -103,6 +120,29 @@ function buildTools({ user, ctx = {}, deps = {} }) {
         }),
         warnings: (it.warnings || []).slice(0, 5),
       };
+    },
+        async suggest_alternative_place({ regionSlug, avoidName } = {}) {
+      if (!REGIONS.includes(regionSlug)) return { error: `Unknown region. Use one of: ${REGIONS.join(', ')}` };
+      if (!user.interests || user.interests.length === 0) return { error: 'The user has no interests set yet' };
+      const pois = await loadPois(regionSlug);
+      const avoid = String(avoidName || '').trim().toLowerCase();
+      const old = pois.find((p) => (p.name || '').toLowerCase() === avoid);
+      const { places } = select({ interests: user.interests, pace: user.pace }, 3, pois);
+      const options = places
+        .filter((r) => r.score > PACE_WEIGHT && (r.poi.name || '').toLowerCase() !== avoid)
+        .sort((a, b) => (old && b.poi.kind === old.kind) - (old && a.poi.kind === old.kind) || b.score - a.score) // same kind first
+        .slice(0, 3);
+      if (options.length === 0) return { note: 'No good alternative found (the data may be sparse).' };
+      return options.map((r) => ({ name: r.poi.name, kind: r.poi.kind, score: r.score }));
+    },
+
+    async search_places({ regionSlug, query } = {}) {
+      if (!REGIONS.includes(regionSlug)) return { error: `Unknown region. Use one of: ${REGIONS.join(', ')}` };
+      const q = String(query || '').trim().toLowerCase();
+      if (q.length < 2) return { error: 'Query is too short' };
+      const hits = (await loadPois(regionSlug)).filter((p) => (p.name || '').toLowerCase().includes(q)).slice(0, 8);
+      if (hits.length === 0) return { note: 'No place with this name in the database.' };
+      return hits.map((p) => ({ name: p.name, kind: p.kind }));
     },
   };
 }
