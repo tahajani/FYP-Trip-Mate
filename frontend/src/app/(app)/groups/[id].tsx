@@ -205,6 +205,9 @@ export default function GroupDetailScreen() {
           <Pressable style={ui.btn} onPress={() => router.push(`/group-chat/${id}`)}>
             <Text style={ui.btnText}>Open group chat</Text>
           </Pressable>
+          <Pressable style={[ui.btnGhost, { marginTop: 10 }]} onPress={() => router.push(`/assistant?groupId=${id}` as any)}>
+            <Text style={ui.btnGhostText}>Ask the assistant about this trip</Text>
+          </Pressable>
           <Pressable style={[ui.btnDanger, { marginTop: 24 }]} disabled={busy} onPress={leaveGroup}>
             <Text style={ui.btnDangerText}>Leave group</Text>
           </Pressable>

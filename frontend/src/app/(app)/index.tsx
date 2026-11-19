@@ -93,6 +93,7 @@ export default function Home() {
         </View>
         <Pressable onPress={() => router.push('/groups' as any)}><Text>Groups</Text></Pressable>
         <Pressable onPress={() => router.push('/plan-trip' as any)}><Text>Plan a trip</Text></Pressable>
+        <Pressable onPress={() => router.push('/assistant' as any)}><Text>Assistant</Text></Pressable>
       </View>
 
       <TripsSection />
