@@ -1,5 +1,6 @@
 // services/agent.js  Groq function calling. The LLM only chooses a tool; the backend does all the computing.
 const { CATEGORIES } = require('../config/categories');
+const { fairnessCheck } = require('./fairness');
 const { selectCandidates, loadRegionPois } = require('./candidates');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'; // OpenAI-style API, NOT VERIFIED (written without network access)
@@ -56,6 +57,16 @@ const TOOLS = [
       regionSlug: { type: 'string', enum: REGIONS },
       query: { type: 'string', description: 'Part of a place name' },
     }, required: ['regionSlug', 'query'] },
+  } },
+    { type: 'function', function: {
+    name: 'get_trip_summary',
+    description: "Summary of the user's latest trip (or the current group's trip): dates, places per day, time spent, warnings.",
+    parameters: { type: 'object', properties: {} },
+  } },
+  { type: 'function', function: {
+    name: 'check_group_fairness',
+    description: 'Check whether the latest group itinerary is fair to every member and whether the group should hold a vote. Read-only.',
+    parameters: { type: 'object', properties: {} },
   } },
 ];
 
@@ -143,6 +154,44 @@ function buildTools({ user, ctx = {}, deps = {} }) {
       const hits = (await loadPois(regionSlug)).filter((p) => (p.name || '').toLowerCase().includes(q)).slice(0, 8);
       if (hits.length === 0) return { note: 'No place with this name in the database.' };
       return hits.map((p) => ({ name: p.name, kind: p.kind }));
+    },
+        async get_trip_summary() {
+      const Itinerary = model('Itinerary');
+      let it = null;
+      if (ctx.groupId) {
+        const g = await model('Group').findById(ctx.groupId).lean();
+        const ok = g && g.members.some((m) => String(m.userId) === String(user.id) && m.status === 'accepted');
+        if (!ok) return { error: 'No group found for this user' };
+        if (g.latestItineraryId) it = await Itinerary.findById(g.latestItineraryId).lean();
+      } else {
+        it = await Itinerary.findOne({ ownerId: user.id }).sort({ createdAt: -1 }).lean();
+      }
+      if (!it) return { error: 'No itinerary yet' };
+      return {
+        type: it.type, startDate: it.startDate, endDate: it.endDate, dayCount: it.dayCount,
+        days: it.days.map((d) => ({ day: d.day, date: d.date, places: d.places.map((p) => p.name), visitMinutes: d.visitMinutes, travelMinutes: d.travelMinutes })),
+        warnings: (it.warnings || []).slice(0, 5),
+        travelTimeSource: it.travelTimeSource,
+      };
+    },
+
+    async check_group_fairness() {
+      const g = ctx.groupId
+        ? await model('Group').findById(ctx.groupId).lean()
+        : await model('Group').findOne({ members: { $elemMatch: { userId: user.id, status: 'accepted' } }, latestItineraryId: { $ne: null } }).sort({ updatedAt: -1 }).lean();
+      const ok = g && g.members.some((m) => String(m.userId) === String(user.id) && m.status === 'accepted');
+      if (!ok) return { error: 'No group found for this user' };
+      if (!g.latestItineraryId) return { error: 'This group has no itinerary yet' };
+      const it = await model('Itinerary').findById(g.latestItineraryId).lean();
+      if (!it) return { error: 'Itinerary not found' };
+      const r = fairnessCheck(it.satisfaction);
+      const users = await model('User').find({ _id: { $in: it.satisfaction.map((s) => s.userId) } }).select('name').lean();
+      const nameOf = (id) => (users.find((u) => String(u._id) === String(id)) || {}).name || 'a member';
+      return {
+        suggestPoll: r.suggestPoll, reasons: r.reasons,
+        leastHappy: r.worst && { name: nameOf(r.worst.userId), avgScore: r2(r.worst.avgScore) },
+        happiest: r.best && { name: nameOf(r.best.userId), avgScore: r2(r.best.avgScore) },
+      };
     },
   };
 }
