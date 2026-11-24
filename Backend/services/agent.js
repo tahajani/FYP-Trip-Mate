@@ -2,6 +2,7 @@
 const { CATEGORIES } = require('../config/categories');
 const { fairnessCheck } = require('./fairness');
 const { selectCandidates, loadRegionPois } = require('./candidates');
+const { suggestCompanions } = require('./companionMatching');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'; // OpenAI-style API, NOT VERIFIED (written without network access)
 const REGIONS = ['islamabad', 'lahore', 'karachi', 'multan'];
@@ -66,6 +67,11 @@ const TOOLS = [
   { type: 'function', function: {
     name: 'check_group_fairness',
     description: 'Check whether the latest group itinerary is fair to every member and whether the group should hold a vote. Read-only.',
+    parameters: { type: 'object', properties: {} },
+  } },
+    { type: 'function', function: {
+    name: 'suggest_companions',
+    description: 'Find other TripMate users whose interests match the current user (possible travel companions).',
     parameters: { type: 'object', properties: {} },
   } },
 ];
@@ -192,6 +198,16 @@ function buildTools({ user, ctx = {}, deps = {} }) {
         leastHappy: r.worst && { name: nameOf(r.worst.userId), avgScore: r2(r.worst.avgScore) },
         happiest: r.best && { name: nameOf(r.best.userId), avgScore: r2(r.best.avgScore) },
       };
+    },
+    async suggest_companions() {
+      const User = model('User');
+      const me = await User.findById(user.id).select('name interests pace').lean();
+      if (!me || !(me.interests || []).length) return { error: 'The user has no interests set yet' };
+      const others = await User.find({ _id: { $ne: user.id }, 'interests.0': { $exists: true } }).select('name interests pace').limit(500).lean();
+      const m = (u) => ({ id: String(u._id), name: u.name, interests: u.interests || [], pace: u.pace });
+      const out = suggestCompanions(m(me), others.map(m), { limit: 5 });
+      if (!out.length) return { note: 'No user matches yet (threshold 0.6).' };
+      return out.map((r) => ({ name: r.name, score: r2(r.score), sharedInterests: r.sharedInterests, pace: r.pace }));
     },
   };
 }

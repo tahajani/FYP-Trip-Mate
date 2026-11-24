@@ -121,3 +121,55 @@ test('tool list matches the implemented tools and the system prompt carries the 
   assert.deepEqual(TOOLS.map((t) => t.function.name).sort(), Object.keys(impl).sort());
   assert.match(systemPrompt(user, '2026-12-01'), /history_heritage.*2026-12-01/s);
 });
+
+
+// ---- tests for the later tools (stubbed models, no database) ----
+const q = (v) => { const o = { sort: () => o, lean: async () => v, select: () => o, limit: () => o }; return o; };
+const itin = {
+  type: 'group', startDate: '2026-12-01', endDate: '2026-12-02', dayCount: 2, warnings: [], travelTimeSource: 'osrm',
+  days: [{ day: 1, date: '2026-12-01', places: [{ name: 'Fort' }], visitMinutes: 90, travelMinutes: 10 }],
+  satisfaction: [{ userId: 'a', avgScore: 0.7 }, { userId: 'b', avgScore: 0.35 }],
+};
+const grp = { members: [{ userId: 'u1', status: 'accepted' }], latestItineraryId: 'i1' };
+const models = {
+  Group: { findById: () => q(grp), findOne: () => q(grp) },
+  Itinerary: { findById: () => q(itin), findOne: () => q(itin) },
+  User: { find: () => q([{ _id: 'a', name: 'Ali', interests: ['history_heritage'], pace: 'fast' }, { _id: 'b', name: 'Sara', interests: ['food_cafes'], pace: 'fast' }]), findById: () => q({ _id: 'u1', name: 'Taha', interests: ['history_heritage'], pace: 'moderate' }) },
+};
+
+test('get_trip_summary and check_group_fairness read the latest itinerary', async () => {
+  const impl = buildTools({ user, ctx: { groupId: 'g1' }, deps: { models } });
+  const sum = await impl.get_trip_summary();
+  assert.equal(sum.days[0].places[0], 'Fort');
+  const fair = await impl.check_group_fairness();
+  assert.equal(fair.suggestPoll, true);
+  assert.equal(fair.leastHappy.name, 'Sara');
+});
+
+test('group tools refuse a user who is not an accepted member', async () => {
+  const outsider = { id: 'someone-else', interests: [], pace: 'moderate' };
+  const impl = buildTools({ user: outsider, ctx: { groupId: 'g1' }, deps: { models } });
+  assert.ok((await impl.get_trip_summary()).error);
+  assert.ok((await impl.check_group_fairness()).error);
+});
+
+test('search_places and suggest_alternative_place validate input and never invent places', async () => {
+  const impl = buildTools({ user, deps: { loadPois: async () => pois, select: selectCandidates } });
+  assert.ok((await impl.search_places({ regionSlug: 'nowhere', query: 'fort' })).error);
+  assert.ok((await impl.search_places({ regionSlug: 'lahore', query: 'x' })).error);
+  const hit = await impl.search_places({ regionSlug: 'lahore', query: pois[0].name.slice(0, 3) });
+  assert.ok(Array.isArray(hit) ? hit.every((p) => pois.some((x) => x.name === p.name)) : hit.note);
+  const alt = await impl.suggest_alternative_place({ regionSlug: 'lahore', avoidName: pois[0].name });
+  if (Array.isArray(alt)) assert.ok(alt.length <= 3 && alt.every((p) => p.name !== pois[0].name));
+});
+
+test('suggest_companions returns matching users only', async () => {
+  const impl = buildTools({ user, deps: { models } });
+  const r = await impl.suggest_companions();
+  assert.ok(Array.isArray(r) ? r.every((x) => x.name !== 'Sara') : r.note);
+});
+
+test('every declared tool has an implementation', () => {
+  const impl = buildTools({ user });
+  for (const t of TOOLS) assert.equal(typeof impl[t.function.name], 'function', t.function.name);
+});
