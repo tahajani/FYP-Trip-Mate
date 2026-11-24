@@ -2,6 +2,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const User = require('../models/User');
+const AgentChat = require('../models/AgentChat');
 const { buildTools, runAgent, systemPrompt } = require('../services/agent');
 
 const router = express.Router();
@@ -44,10 +45,38 @@ router.post('/chat', async (req, res) => {
     const user = { id: String(u._id), name: u.name, interests: u.interests || [], pace: u.pace };
     const impl = buildTools({ user, ctx: { groupId: groupId ? String(groupId) : null } });
     const out = await runAgent({ messages: clean, impl, system: systemPrompt(user) });
+        // save this exchange for this account (best effort: a failed save must not hide the answer)
+    try {
+      await AgentChat.updateOne(
+        { userId: req.userId },
+        { $push: { messages: { $each: [{ role: 'user', content: clean[clean.length - 1].content }, { role: 'assistant', content: String(out.reply || '').slice(0, 4000) }], $slice: -200 } } },
+        { upsert: true }
+      );
+    } catch (e) { console.error('agent save:', e.message); }
     res.json({ reply: out.reply });
   } catch (err) {
     console.error('agent:', err.message);
     res.status(502).json({ message: 'The assistant is unavailable right now' });
+  }
+});
+
+// GET /api/agent/history -> { messages: [{ role, content, createdAt }] }  (last 50 of this user's conversation)
+router.get('/history', async (req, res) => {
+  try {
+    const chat = await AgentChat.findOne({ userId: req.userId }).lean();
+    res.json({ messages: ((chat && chat.messages) || []).slice(-50) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// DELETE /api/agent/history -> clears this user's conversation
+router.delete('/history', async (req, res) => {
+  try {
+    await AgentChat.deleteOne({ userId: req.userId });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

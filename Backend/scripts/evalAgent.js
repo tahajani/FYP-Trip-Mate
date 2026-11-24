@@ -26,6 +26,8 @@ const CASES = [
   ['Mera trip ka summary do', 'get_trip_summary'],
   ['Is our group plan fair to everyone? Should we vote?', 'check_group_fairness'],
   ['Kya group ko vote karna chahiye?', 'check_group_fairness'],
+  ['Who can I travel with?', 'suggest_companions'],
+  ['Mere liye koi travel partner batao', 'suggest_companions'],
   ['Hello, who are you?', null],
   ['Thanks!', null],
 ];

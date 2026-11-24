@@ -3,6 +3,9 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const User = require('../models/User');
+let bcrypt;
+try { bcrypt = require('bcryptjs'); } catch { bcrypt = require('bcrypt'); }
+const PASSWORD = 'Seed@1234';
 
 const EMAIL_RE = /^seed\d+@tripmate\.test$/;
 // Archetypes: some identical, some sharing 2 of 3 interests, some opposite, so companion matching (>= 0.6) has real cases.
@@ -20,19 +23,23 @@ const NAMES = ['Ayesha Khan', 'Bilal Ahmed', 'Hira Malik', 'Usman Tariq', 'Zaina
 
 async function main() {
   await mongoose.connect(process.env.MONGO_URI);
-  if (process.argv.includes('--clean')) {
-    const r = await User.deleteMany({ email: { $regex: EMAIL_RE } });
-    console.log(`Deleted ${r.deletedCount} seed users`);
+    if (process.argv.includes('--clean')) {
+    const Group = require('../models/Group');
+    const ids = (await User.find({ email: { $regex: EMAIL_RE } }).select('_id').lean()).map((u) => u._id);
+    const g = await Group.updateMany({}, { $pull: { members: { userId: { $in: ids } } } });
+    const r = await User.deleteMany({ _id: { $in: ids } });
+    console.log(`Removed seed users from ${g.modifiedCount} groups, deleted ${r.deletedCount} users`);
     return;
   }
   const i = process.argv.indexOf('--count');
   const count = Math.min(Math.max(parseInt(i > -1 ? process.argv[i + 1] : '12', 10) || 12, 1), NAMES.length);
-
+  const hash = await bcrypt.hash(PASSWORD, 10);
   const docs = Array.from({ length: count }, (_, n) => ({
     name: NAMES[n],
     email: `seed${n + 1}@tripmate.test`,
     interests: ARCHETYPES[n % ARCHETYPES.length],
     pace: PACES[(n + Math.floor(n / ARCHETYPES.length)) % PACES.length], // mixed paces inside the same archetype
+    password: hash,
     // ADD any other required fields of your User schema here (e.g. password, onboardingComplete: true)
   }));
 
@@ -48,6 +55,6 @@ async function main() {
     await User.create(d);
     created++;
   }
-  console.log(`Created ${created}, skipped ${skipped} existing. Delete later with: node scripts/seedUsers.js --clean`);
+    console.log(`Created ${created}, skipped ${skipped}. Login: seed1@tripmate.test ... password ${PASSWORD}. Delete later with --clean`);
 }
 main().catch((e) => { console.error(e.message); process.exitCode = 1; }).finally(() => mongoose.disconnect());
