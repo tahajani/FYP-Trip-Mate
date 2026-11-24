@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import api from '../../../services/api';
 import { getSocket } from '../../../services/socket';
 import { getAuthToken, userIdFromToken } from '../../../services/authToken';
+import AssistantDock from '../../../components/AssistantDock';
 
 type Msg = { id: string; senderId: string; text: string; createdAt?: string };
 
@@ -15,29 +16,47 @@ export default function GroupChatScreen() {
 
   const [token, setToken] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [groupName, setGroupName] = useState('Group chat');
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<FlatList<Msg>>(null);
 
-  // 1) token + chat history
+  // 1) token, chat history, group name and member names
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const t = await getAuthToken();
-        if (!t) throw new Error('Login token nahi mila');
+        if (!t) throw new Error('Login token not found');
         const { data } = await api.get(`/groups/${id}/messages?limit=50`);
         if (!alive) return;
         setToken(t);
         setMessages(data);
       } catch (e: any) {
-        if (alive) setError(e?.response?.data?.message ?? e?.message ?? 'Chat load nahi hui');
+        if (alive) setError(e?.response?.data?.message ?? e?.message ?? 'Could not load the chat');
       } finally {
         if (alive) setLoading(false);
       }
+      // names are a nice-to-have: the chat still works if this call fails
+      try {
+        const { data: g } = await api.get(`/groups/${id}`);
+        if (!alive) return;
+        setGroupName(g.name || 'Group chat');
+        const map: Record<string, string> = {};
+        (g.members || []).forEach((m: any) => {
+          const u = m.userId;
+          if (u && typeof u === 'object') map[String(u._id)] = u.name || 'Member';
+        });
+        setNames(map);
+      } catch {
+        /* ignore */
+      }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [id]);
 
   // 2) live messages (join again after every reconnect, rooms are lost when the connection drops)
@@ -46,10 +65,10 @@ export default function GroupChatScreen() {
     const s = getSocket(token);
     const join = () =>
       s.emit('group:join', { groupId: id }, (r: any) => {
-        if (!r?.ok) setError(r?.error ?? 'Group join nahi hua');
+        if (!r?.ok) setError(r?.error ?? 'Could not join the group room');
       });
     const onMsg = (m: Msg) => setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
-    const onFail = () => setError('Server se connection nahi bana');
+    const onFail = () => setError('Could not connect to the server');
 
     if (s.connected) join();
     s.on('connect', join);
@@ -68,7 +87,7 @@ export default function GroupChatScreen() {
     if (!clean || !token) return;
     setError(null);
     getSocket(token).emit('group:message', { groupId: id, text: clean }, (r: any) => {
-      if (!r?.ok) setError(r?.error ?? 'Message nahi gaya');
+      if (!r?.ok) setError(r?.error ?? 'Message was not sent');
       else setText('');
     });
   };
@@ -78,10 +97,17 @@ export default function GroupChatScreen() {
 
   return (
     <KeyboardAvoidingView style={s.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
-        <Text style={s.link}>← Wapas</Text>
+      <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/' as any))}>
+        <Text style={s.link}>← Back</Text>
       </Pressable>
-      <Text style={s.title}>Group chat</Text>
+
+      <View style={s.headRow}>
+        <Text style={s.title} numberOfLines={1}>{groupName}</Text>
+        <Pressable style={s.pillGhost} onPress={() => router.push(`/group-itinerary/${id}` as any)}>
+          <Text style={s.pillGhostText}>Trip</Text>
+        </Pressable>
+        <AssistantDock compact groupId={String(id)} />
+      </View>
       {error && <Text style={s.error}>{error}</Text>}
 
       <FlatList
@@ -91,12 +117,12 @@ export default function GroupChatScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingVertical: 8 }}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        ListEmptyComponent={<Text style={s.muted}>Abhi koi message nahi. Pehla message bhejo.</Text>}
+        ListEmptyComponent={<Text style={s.muted}>No messages yet. Send the first one.</Text>}
         renderItem={({ item }) => {
           const mine = !!myId && item.senderId === myId;
           return (
             <View style={[s.bubble, mine ? s.mine : s.theirs]}>
-              {!mine && <Text style={s.sender}>{item.senderId.slice(-4)}</Text>}
+              {!mine && <Text style={s.sender}>{names[item.senderId] ?? 'Member'}</Text>}
               <Text style={mine ? s.mineText : s.theirsText}>{item.text}</Text>
             </View>
           );
@@ -108,13 +134,13 @@ export default function GroupChatScreen() {
           style={s.input}
           value={text}
           onChangeText={setText}
-          placeholder="Message likho..."
+          placeholder="Write a message..."
           maxLength={1000}
           onSubmitEditing={send}
           returnKeyType="send"
         />
         <Pressable style={[s.sendBtn, !text.trim() && { opacity: 0.5 }]} onPress={send} disabled={!text.trim()}>
-          <Text style={s.sendText}>Bhejo</Text>
+          <Text style={s.sendText}>Send</Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -124,7 +150,10 @@ export default function GroupChatScreen() {
 const s = StyleSheet.create({
   container: { flex: 1, padding: 20, paddingTop: 48, backgroundColor: '#f8fafc' },
   link: { color: '#2563eb', fontWeight: '600' },
-  title: { fontSize: 24, fontWeight: '800', color: '#0f172a', marginVertical: 8 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 8 },
+  title: { flex: 1, fontSize: 22, fontWeight: '800', color: '#0f172a' },
+  pillGhost: { borderWidth: 1, borderColor: '#2563eb', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
+  pillGhostText: { color: '#2563eb', fontWeight: '700', fontSize: 13 },
   muted: { color: '#64748b', textAlign: 'center', marginTop: 24 },
   error: { color: '#b91c1c', marginBottom: 6 },
   bubble: { maxWidth: '80%', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, marginVertical: 4 },
@@ -132,7 +161,7 @@ const s = StyleSheet.create({
   theirs: { alignSelf: 'flex-start', backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
   mineText: { color: '#fff' },
   theirsText: { color: '#0f172a' },
-  sender: { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 2 },
+  sender: { fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 2 },
   inputRow: { flexDirection: 'row', gap: 8, paddingTop: 8 },
   input: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#fff' },
   sendBtn: { backgroundColor: '#2563eb', borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' },

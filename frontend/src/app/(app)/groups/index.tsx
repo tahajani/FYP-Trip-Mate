@@ -4,7 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import api from '../../../services/api';
 import { errMsg, ui } from '../../../components/ui';
 
-type GroupRow = { _id: string; name: string; members?: { status: string }[]; maxMembers?: number };
+type GroupRow = { id: string; name: string; myStatus: string; isOwner: boolean; acceptedCount: number; pendingCount: number; maxMembers: number };
 
 export default function GroupsScreen() {
   const router = useRouter();
@@ -13,6 +13,7 @@ export default function GroupsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -28,6 +29,7 @@ export default function GroupsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // join with an invite code
   const join = async () => {
     const c = code.trim().toLowerCase();
     if (!c) return;
@@ -36,12 +38,39 @@ export default function GroupsScreen() {
     try {
       const { data } = await api.post('/groups/join', { code: c });
       setCode('');
-      if (data?.groupId) router.push(`/groups/${data.groupId}` as any);
+      if (data?.groupId) router.push(`/group-chat/${data.groupId}` as any);
       else await load();
     } catch (e) {
       setError(errMsg(e, 'Could not join the group'));
     } finally {
       setJoining(false);
+    }
+  };
+
+  // accept an invitation shown on a card, then go straight into the group chat
+  const accept = async (g: GroupRow) => {
+    setBusyId(g.id);
+    setError(null);
+    try {
+      await api.post(`/groups/${g.id}/accept`);
+      router.push(`/group-chat/${g.id}` as any);
+    } catch (e) {
+      setError(errMsg(e, 'Could not join the group'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decline = async (g: GroupRow) => {
+    setBusyId(g.id);
+    setError(null);
+    try {
+      await api.post(`/groups/${g.id}/decline`);
+      await load();
+    } catch (e) {
+      setError(errMsg(e, 'Could not decline the invitation'));
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -69,25 +98,48 @@ export default function GroupsScreen() {
         </Pressable>
       </View>
 
-      <Pressable style={[ui.btnGhost, { marginVertical: 12 }]} onPress={() => router.push('/groups/new')}>
+      <Pressable style={[ui.btnGhost, { marginVertical: 12 }]} onPress={() => router.push('/groups/new' as any)}>
         <Text style={ui.btnGhostText}>+ Create a group</Text>
       </Pressable>
 
       <FlatList
         data={groups}
-        keyExtractor={(g) => g._id}
+        keyExtractor={(g) => g.id}
         ListEmptyComponent={<Text style={ui.muted}>You are not in any group yet. Create one or join with an invite code.</Text>}
         renderItem={({ item }) => {
-          const accepted = item.members?.filter((m) => m.status === 'accepted').length ?? 0;
-          const pending = item.members?.some((m) => m.status === 'pending');
+          const invited = item.myStatus === 'pending';
+          const busy = busyId === item.id;
           return (
-            <Pressable style={ui.card} onPress={() => router.push(`/groups/${item._id}`)}>
+            <Pressable style={ui.card} onPress={() => router.push(`/groups/${item.id}` as any)}>
               <Text style={ui.cardTitle}>{item.name}</Text>
               <Text style={ui.muted}>
-                {accepted}
+                {item.acceptedCount}
                 {item.maxMembers ? ` / ${item.maxMembers}` : ''} members
               </Text>
-              {pending && <Text style={[ui.badge, { alignSelf: 'flex-start', marginTop: 6 }]}>Has pending invites</Text>}
+
+              {invited ? (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={[ui.badge, { alignSelf: 'flex-start', marginBottom: 8 }]}>You are invited to this group</Text>
+                  <View style={ui.row}>
+                    <Pressable style={[ui.btn, busy && { opacity: 0.5 }]} onPress={() => accept(item)} disabled={busy}>
+                      <Text style={ui.btnText}>{busy ? 'Please wait...' : 'Join'}</Text>
+                    </Pressable>
+                    <Pressable style={[ui.btnGhost, busy && { opacity: 0.5 }]} onPress={() => decline(item)} disabled={busy}>
+                      <Text style={ui.btnGhostText}>Decline</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={[ui.row, { marginTop: 10 }]}>
+                  <Pressable style={ui.btn} onPress={() => router.push(`/group-chat/${item.id}` as any)}>
+                    <Text style={ui.btnText}>Chat</Text>
+                  </Pressable>
+                  <Pressable style={ui.btnGhost} onPress={() => router.push(`/group-itinerary/${item.id}` as any)}>
+                    <Text style={ui.btnGhostText}>Trip</Text>
+                  </Pressable>
+                  {item.isOwner && item.pendingCount > 0 && <Text style={ui.badge}>{item.pendingCount} pending</Text>}
+                </View>
+              )}
             </Pressable>
           );
         }}

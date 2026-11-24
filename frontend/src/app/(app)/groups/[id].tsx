@@ -7,7 +7,7 @@ import { confirmAction, errMsg, ui } from '../../../components/ui';
 import SuggestedCompanions from '../../../components/SuggestedCompanions';
 
 type Member = {
-  userId: string | { _id: string; name?: string; email?: string }; // populated or plain id (NOT VERIFIED which one the API returns)
+    userId: string | { _id: string; name?: string; email?: string } | null; // populated or plain id (NOT VERIFIED which one the API returns)
   status: 'pending' | 'accepted' | 'declined';
 };
 type Group = {
@@ -17,7 +17,11 @@ type Group = {
 
 const uid = (x: any) => String(typeof x === 'object' && x ? x._id : x);
 const label = (m: Member) =>
-  typeof m.userId === 'object' ? m.userId.name || m.userId.email || uid(m.userId).slice(-6) : String(m.userId).slice(-6);
+  m.userId && typeof m.userId === 'object'
+    ? m.userId.name || m.userId.email || uid(m.userId).slice(-6)
+    : m.userId
+      ? String(m.userId).slice(-6)
+      : 'Deleted user';
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -96,6 +100,7 @@ export default function GroupDetailScreen() {
       const body: any = { startDate: startDate.trim(), endDate: endDate.trim() };
       if (!group.regionSlug) body.regionSlug = region.trim(); // the backend uses the group's region when it has one
       await api.post(`/groups/${id}/itinerary`, body);
+      router.push(`/group-itinerary/${id}` as any);
     }, 'Group itinerary generated.');
 
   return (
@@ -112,7 +117,7 @@ export default function GroupDetailScreen() {
         <View style={ui.card}>
           <Text style={ui.cardTitle}>You have been invited to this group</Text>
           <View style={[ui.row, { marginTop: 10 }]}>
-            <Pressable style={[ui.btn, { flex: 1 }]} disabled={busy} onPress={() => act(() => api.post(`/groups/${id}/accept`))}>
+            <Pressable style={[ui.btn, { flex: 1 }]} disabled={busy} onPress={() => act(() => api.post(`/groups/${id}/accept`) )}>
               <Text style={ui.btnText}>Accept</Text>
             </Pressable>
             <Pressable style={[ui.btnDanger, { flex: 1 }]} disabled={busy} onPress={() => act(async () => { await api.post(`/groups/${id}/decline`); router.replace('/groups'); })}>
@@ -175,7 +180,7 @@ export default function GroupDetailScreen() {
       {/* itinerary */}
       <Text style={ui.h2}>Group itinerary</Text>
       {group.latestItineraryId ? (
-        <Pressable style={[ui.btn, { marginBottom: 10 }]} onPress={() => router.push(`/itinerary/${group.latestItineraryId}`)}>
+                <Pressable style={[ui.btn, { marginBottom: 10 }]} onPress={() => router.push(`/group-itinerary/${id}` as any)}>
           <Text style={ui.btnText}>View latest itinerary</Text>
         </Pressable>
       ) : (
@@ -202,7 +207,7 @@ export default function GroupDetailScreen() {
       {me?.status === 'accepted' && (
         <>
           <Text style={ui.h2}>Chat</Text>
-          <Pressable style={ui.btn} onPress={() => router.push(`/group-chat/${id}`)}>
+                    <Pressable style={ui.btn} onPress={() => router.push(`/group-chat/${id}` as any)}>
             <Text style={ui.btnText}>Open group chat</Text>
           </Pressable>
           <Pressable style={[ui.btnGhost, { marginTop: 10 }]} onPress={() => router.push(`/assistant?groupId=${id}` as any)}>
