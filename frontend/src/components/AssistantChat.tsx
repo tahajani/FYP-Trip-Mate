@@ -89,7 +89,7 @@ export default function AssistantChat({ groupId }: { groupId?: string }) {
           value={text}
           onChangeText={setText}
           placeholder="Ask the assistant..."
-          maxLength={1000}
+          maxLength={6500}
           onSubmitEditing={send}
           returnKeyType="send"
         />

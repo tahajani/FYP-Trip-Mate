@@ -7,6 +7,7 @@ import api from '../../../services/api';
 import { getSocket } from '../../../services/socket';
 import { getAuthToken, userIdFromToken } from '../../../services/authToken';
 import AssistantDock from '../../../components/AssistantDock';
+import GroupPolls from '../../../components/GroupPolls';
 
 type Msg = { id: string; senderId: string; text: string; createdAt?: string };
 
@@ -109,6 +110,8 @@ export default function GroupChatScreen() {
         <AssistantDock compact groupId={String(id)} />
       </View>
       {error && <Text style={s.error}>{error}</Text>}
+
+      <GroupPolls groupId={String(id)} compact />
 
       <FlatList
         ref={listRef}

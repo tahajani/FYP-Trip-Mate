@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import GroupPolls from '../../../components/GroupPolls';
 import api from '../../../services/api';
 import { getAuthToken, userIdFromToken } from '../../../services/authToken';
 import { confirmAction, errMsg, ui } from '../../../components/ui';
@@ -179,6 +180,7 @@ export default function GroupDetailScreen() {
 
       {/* itinerary */}
       <Text style={ui.h2}>Group itinerary</Text>
+      <GroupPolls groupId={String(id)} />
       {group.latestItineraryId ? (
                 <Pressable style={[ui.btn, { marginBottom: 10 }]} onPress={() => router.push(`/group-itinerary/${id}` as any)}>
           <Text style={ui.btnText}>View latest itinerary</Text>
