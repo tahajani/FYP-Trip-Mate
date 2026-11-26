@@ -4,7 +4,8 @@ const auth = require('../middleware/auth');
 const User = require('../models/User');
 const AgentChat = require('../models/AgentChat');
 const { buildTools, runAgent, systemPrompt } = require('../services/agent');
-
+const MAX_MSG_CHARS = 6500;      // one message (the user's text or an earlier assistant reply)
+const MAX_HISTORY_CHARS = 24000; // total text sent to the model, older messages are dropped first (keeps it under the LLM token limits)
 const router = express.Router();
 router.use(auth);
 
@@ -32,8 +33,8 @@ router.post('/chat', async (req, res) => {
     const clean = [];
     for (const m of messages) {
       const text = typeof (m && m.content) === 'string' ? m.content.trim() : '';
-      if (!m || !['user', 'assistant'].includes(m.role) || !text || text.length > 1000) {
-        return res.status(400).json({ message: 'each message needs role user/assistant and 1 to 1000 characters of text' });
+            if (!m || !['user', 'assistant'].includes(m.role) || !text || text.length > MAX_MSG_CHARS) {
+        return res.status(400).json({ message: `each message needs role user/assistant and 1 to ${MAX_MSG_CHARS} characters of text` });
       }
       clean.push({ role: m.role, content: text });
     }
@@ -43,13 +44,21 @@ router.post('/chat', async (req, res) => {
     const u = await User.findById(req.userId).select('name interests pace').lean(); // field names verified by the matching routes
     if (!u) return res.status(404).json({ message: 'User nahi mila' });
     const user = { id: String(u._id), name: u.name, interests: u.interests || [], pace: u.pace };
+        // keep the newest messages that fit the budget (always at least the last one)
+    const kept = [];
+    let total = 0;
+    for (let i = clean.length - 1; i >= 0; i--) {
+      total += clean[i].content.length;
+      if (total > MAX_HISTORY_CHARS && kept.length > 0) break;
+      kept.unshift(clean[i]);
+    }
     const impl = buildTools({ user, ctx: { groupId: groupId ? String(groupId) : null } });
-    const out = await runAgent({ messages: clean, impl, system: systemPrompt(user) });
+        const out = await runAgent({ messages: kept, impl, system: systemPrompt(user) });
         // save this exchange for this account (best effort: a failed save must not hide the answer)
     try {
       await AgentChat.updateOne(
         { userId: req.userId },
-        { $push: { messages: { $each: [{ role: 'user', content: clean[clean.length - 1].content }, { role: 'assistant', content: String(out.reply || '').slice(0, 4000) }], $slice: -200 } } },
+        { $push: { messages: { $each: [{ role: 'user', content: clean[clean.length - 1].content }, { role: 'assistant', content: String(out.reply || '').slice(0, 8000) }], $slice: -200 } } },
         { upsert: true }
       );
     } catch (e) { console.error('agent save:', e.message); }

@@ -5,6 +5,8 @@ const Group = require('../models/Group');
 const User = require('../models/User');
 const Itinerary = require('../models/Itinerary');
 const GroupMessage = require('../models/GroupMessage');
+const GroupPoll = require('../models/GroupPoll');
+const { fairnessPollFor, buildCustomPoll, castVote, viewOf } = require('../services/poll');
 const { loadRegionPois } = require('../services/candidates');
 const { generateGroupItinerary } = require('../services/groupItinerary');
 const { validateTripDates } = require('../utils/dates');
@@ -195,7 +197,15 @@ router.post('/:id/itinerary', async (req, res) => {
     g.regionSlug = regionSlug;
     g.days = days;
     await g.save();
-    res.status(201).json({ itinerary: saved, satisfaction: result.satisfaction, consensusCount, dropped, moved });
+    let pollId = null;
+    try {
+      await GroupPoll.updateMany({ groupId: g._id, type: 'fairness', status: 'open' }, { status: 'closed', closedAt: new Date() });
+      const spec = fairnessPollFor(result.satisfaction);
+      if (spec) pollId = (await GroupPoll.create({ groupId: g._id, itineraryId: saved._id, createdBy: null, ...spec }))._id;
+    } catch (e) {
+      console.error('fairness poll:', e.message); // a poll problem must never break itinerary generation
+    }
+    res.status(201).json({ itinerary: saved, satisfaction: result.satisfaction, consensusCount, dropped, moved, pollId });
   } catch (err) {
     if (!(err instanceof HttpError) && err.name !== 'ValidationError' && /member|days|interests|pace|date/i.test(err.message)) {
       return res.status(400).json({ message: err.message });
@@ -232,6 +242,79 @@ router.get('/:id/messages', async (req, res) => {
     }
     const rows = await GroupMessage.find(q).sort({ createdAt: -1 }).limit(limit);
     res.json(rows.reverse().map((r) => ({ id: r._id, senderId: r.senderId, text: r.text, createdAt: r.createdAt })));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+const acceptedIds = (g) => g.members.filter((m) => m.status === 'accepted').map((m) => String(m.userId));
+const findPoll = async (g, pollId) => {
+  try { return await GroupPoll.findOne({ _id: pollId, groupId: g._id }); } catch { return null; } // a malformed id is just "not found"
+};
+
+// GET /api/groups/:id/polls -> { isOwner, polls }   open polls first, then the 2 latest closed ones (accepted members only)
+router.get('/:id/polls', async (req, res) => {
+  try {
+    const g = await load(req);
+    if (mine(g, uid(req)).status !== 'accepted') return res.status(403).json({ message: 'Pehle invite accept karo' });
+    const rows = await GroupPoll.find({ groupId: g._id }).sort({ createdAt: -1 }).limit(10).lean();
+    const shown = [...rows.filter((p) => p.status === 'open'), ...rows.filter((p) => p.status === 'closed').slice(0, 2)];
+    res.json({ isOwner: String(g.ownerId) === uid(req), polls: shown.map((p) => viewOf(p, uid(req))) });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// POST /api/groups/:id/polls  { question, options: ['A', 'B'] }   owner only, at most 3 open polls
+router.post('/:id/polls', async (req, res) => {
+  try {
+    const g = await load(req);
+    if (String(g.ownerId) !== uid(req)) return res.status(403).json({ message: 'Only the group owner can start a poll' });
+    if (acceptedIds(g).length < 2) return res.status(400).json({ message: 'A poll needs at least 2 accepted members' });
+    let spec;
+    try { spec = buildCustomPoll((req.body || {}).question, (req.body || {}).options); } catch (e) { return res.status(400).json({ message: e.message }); }
+    if ((await GroupPoll.countDocuments({ groupId: g._id, status: 'open' })) >= 3) {
+      return res.status(400).json({ message: 'Close an open poll first (3 open polls at most)' });
+    }
+    const poll = await GroupPoll.create({ groupId: g._id, createdBy: uid(req), ...spec });
+    res.status(201).json(viewOf(poll.toObject(), uid(req)));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// POST /api/groups/:id/polls/:pollId/vote  { optionId }   accepted members, the vote can be changed while the poll is open
+router.post('/:id/polls/:pollId/vote', async (req, res) => {
+  try {
+    const g = await load(req);
+    if (mine(g, uid(req)).status !== 'accepted') return res.status(403).json({ message: 'Pehle invite accept karo' });
+    const poll = await findPoll(g, req.params.pollId);
+    if (!poll) return res.status(404).json({ message: 'Poll not found' });
+    let out;
+    try { out = castVote(poll.toObject(), uid(req), String((req.body || {}).optionId || ''), acceptedIds(g)); } catch (e) { return res.status(400).json({ message: e.message }); }
+    poll.votes = out.votes;
+    poll.status = out.status;
+    if (out.status === 'closed') poll.closedAt = new Date();
+    await poll.save();
+    res.json(viewOf(poll.toObject(), uid(req)));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// POST /api/groups/:id/polls/:pollId/close   owner only
+router.post('/:id/polls/:pollId/close', async (req, res) => {
+  try {
+    const g = await load(req);
+    if (String(g.ownerId) !== uid(req)) return res.status(403).json({ message: 'Only the group owner can close a poll' });
+    const poll = await findPoll(g, req.params.pollId);
+    if (!poll) return res.status(404).json({ message: 'Poll not found' });
+    if (poll.status === 'open') {
+      poll.status = 'closed';
+      poll.closedAt = new Date();
+      await poll.save();
+    }
+    res.json(viewOf(poll.toObject(), uid(req)));
   } catch (err) {
     fail(res, err);
   }
